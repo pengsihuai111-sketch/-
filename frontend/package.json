@@ -1,0 +1,26 @@
+{
+  "name": "question-bank-v4-frontend",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@element-plus/icons-vue": "*",
+    "axios": "*",
+    "element-plus": "*",
+    "html2canvas": "^1.4.1",
+    "jspdf": "^4.2.1",
+    "katex": "^0.16.45",
+    "pinia": "*",
+    "vue": "*",
+    "vue-router": "*"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "*",
+    "vite": "*"
+  }
+}

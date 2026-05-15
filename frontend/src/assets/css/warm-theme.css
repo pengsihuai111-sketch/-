@@ -1,0 +1,45 @@
+/* ========================================
+   智数·小升初学情诊断系统 — 绿白主题
+   参考作业帮品牌风格：清新绿色 + 简洁专业
+   ======================================== */
+
+:root {
+  /* === Brand (绿色系) === */
+  --brand-primary: #10B981;
+  --brand-primary-hover: #059669;
+  --brand-primary-active: #047857;
+  --brand-primary-light: #D1FAE5;
+  --brand-primary-lighter: #ECFDF5;
+
+  /* === Canvas & Surfaces === */
+  --canvas: #F8FAFC;
+  --surface-page: #F1F5F9;
+  --surface-card: #FFFFFF;
+  --surface-card-hover: #FAFAFA;
+  --surface-soft: #F1F5F9;
+  --surface-muted: #E2E8F0;
+
+  /* === Sidebar === */
+  --sidebar-bg: #0F172A;
+  --sidebar-text: #94A3B8;
+  --sidebar-text-active: #FFFFFF;
+  --sidebar-border: rgba(255, 255, 255, 0.06);
+
+  /* === Text === */
+  --text-primary: #0F172A;
+  --text-body: #334155;
+  --text-secondary: #64748B;
+  --text-muted: #94A3B8;
+  --text-placeholder: #CBD5E1;
+
+  /* === Borders === */
+  --border-color: #E2E8F0;
+  --border-soft: #F1F5F9;
+  --border-strong: #CBD5E1;
+
+  /* === Status === */
+  --color-success: #10B981;
+  --color-warning: #F59E0B;
+  --color-danger: #EF4444;
+  --color-info: #64748B;
+}

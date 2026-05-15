@@ -1,0 +1,74 @@
+```json
+[
+    {
+        "question_text": "1.[等差数列]在等差数列1,8,15,22,29,36,43,...中，如果前n个数的乘积的末尾0的个数比前n+1个数的乘积的末尾0的个数少3，那么n最小是__.",
+        "answer": "",
+        "solution": "",
+        "question_type": "fill_blank",
+        "difficulty": "中等",
+        "knowledge_point": "等差数列",
+        "knowledge_category": "数论",
+        "has_image": false
+    },
+    {
+        "question_text": "2.[找规律类]冰箱里有一些饮料分别为矿泉水、可乐、冰红茶，三种饮料的瓶数之比为5:4:6，桶空手喝完矿泉水后，又喝可乐，又喝完可乐后，又喝冰红茶，最后喝完冰红茶后，又喝可乐，这样反复，当第5次喝完冰红茶时，共喝了____天。",
+        "answer": "",
+        "solution": "",
+        "question_type": "fill_blank",
+        "difficulty": "中等",
+        "knowledge_point": "比例问题",
+        "knowledge_category": "其他",
+        "has_image": false
+    },
+    {
+        "question_text": "3.[行程问题]A、B两地相距22千米。甲、乙两人同时从A地出发，向B地匀速前进。当队伍离开A地时，甲、乙两人分别从A、B两地同时相对而行，乙向A地步行，甲骑车先追向队头，追上之后又立即骑向队尾，到达队尾之后又掉头追赶队头，如此反复，当甲第5次追上队头时恰与乙相遇在距B地5.6千米处；当甲第7次追上队头时，甲恰好第一次到B地返回途中距离B地还有____米。",
+        "answer": "",
+        "solution": "",
+        "question_type": "fill_blank",
+        "difficulty": "中等",
+        "knowledge_point": "行程问题",
+        "knowledge_category": "方程与应用",
+        "has_image": false
+    },
+    {
+        "question_text": "4.[行程问题]江上有甲、乙两码头，相距15千米。甲码头在乙码头的上游，一艘货船和一艘游船同时从甲码头去乙码头顺流而下，5小时后货船追上游船。又行驶了1小时，货船上有一物品落入江中(该物品可以浮在水面上)，6分钟后货船上有人发现了，便掉转船头去找，找到时恰好又看到游船相遇。则货船在落水点和遇到游船时的速度分别是____千米/时。",
+        "answer": "",
+        "solution": "",
+        "question_type": "fill_blank",
+        "difficulty": "中等",
+        "knowledge_point": "行程问题",
+        "knowledge_category": "方程与应用",
+        "has_image": false
+    },
+    {
+        "question_text": "5.[概率问题]有5杯水和一个温度计，标有①、②、③的容器可盛放这5种不同的液体，则①、②、③的容器分别装哪种颜色，相邻部分涂不同颜色的涂色方法有____种。",
+        "answer": "",
+        "solution": "",
+        "question_type": "fill_blank",
+        "difficulty": "中等",
+        "knowledge_point": "排列组合",
+        "knowledge_category": "其他",
+        "has_image": true
+    },
+    {
+        "question_text": "6.[找规律]观察图形规律，第2024个图形一共有____个三角形组成。",
+        "answer": "",
+        "solution": "",
+        "question_type": "fill_blank",
+        "difficulty": "中等",
+        "knowledge_point": "图形规律",
+        "knowledge_category": "几何",
+        "has_image": true
+    },
+    {
+        "question_text": "7.[逻辑推理]在纸上写着一列自然数1,2,...98,99.一次操作是指把连续三个数划去，然后把这三个数的和写在数列的最后面。例如第一、二次操作后得到4,5,...98,99;6,这样不断进行下去，最后得到同一个数，这个数是____.",
+        "answer": "",
+        "solution": "",
+        "question_type": "fill_blank",
+        "difficulty": "中等",
+        "knowledge_point": "逻辑推理",
+        "knowledge_category": "其他",
+        "has_image": false
+    },
+    {
+        "question_text": "8.[数列问题]由数字0,1,2,9,既可以用全用，也可以只用一个，但不能重复使用)组成的自然
