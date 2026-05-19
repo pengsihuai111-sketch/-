@@ -21,11 +21,15 @@ def register(req: UserRegister, db: Session = Depends(get_db)):
         if email_exist:
             raise HTTPException(status_code=400, detail="邮箱已被注册")
 
+    # 将空字符串转为 None，避免 UNIQUE KEY 冲突
+    email = req.email if req.email else None
+    phone = req.phone if req.phone else None
+
     user = User(
         username=req.username,
         password_hash=hash_password(req.password),
-        email=req.email,
-        phone=req.phone,
+        email=email,
+        phone=phone,
         real_name=req.real_name,
         grade_level=req.grade_level,
         member_type=MemberType.free,
