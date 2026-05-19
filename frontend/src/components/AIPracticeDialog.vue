@@ -14,7 +14,7 @@
           <div style="display:flex;gap:6px;flex-wrap:wrap">
             <el-button size="small" @click="applyExample('给我一份分数应用题练习，8题，中等偏难，30分钟左右')">专题示例</el-button>
             <el-button size="small" @click="applyExample('根据我最近错题出一份查漏补缺练习，应用题多一点，10题')">错题示例</el-button>
-            <el-button size="small" @click="applyExample('根据我最近一周的错题出三份查漏补缺练习，每张试卷保证4个计算题，一共12题')">多套示例</el-button>
+            <el-button size="small" @click="applyExample('根据我最近一周的错题出三份查漏补缺练习，每张试卷计算题保证4个，每套12题')">多套示例</el-button>
           </div>
         </div>
 
@@ -23,12 +23,12 @@
           type="textarea"
           :rows="4"
           resize="none"
-          placeholder="例如：根据我最近一周的错题出三份查漏补缺练习，每张试卷保证4个计算题，一共12题"
+          placeholder="例如：根据我最近一周的错题出三份查漏补缺练习，每张试卷计算题保证4个，每套12题"
         />
 
         <div style="display:flex;justify-content:space-between;align-items:center;margin-top:10px">
           <div style="font-size:12px;color:#909399">
-            AI 会先理解需求，再从题库候选题里挑题，不会凭空出题。现在支持一次生成多套草稿，并且可以补一题、换一题。
+            AI 会先理解需求，再从题库候选题里挑题。支持一次出多套草稿，并且可以补一题、换一题。
           </div>
           <div style="display:flex;gap:8px">
             <el-button @click="handleClose">取消</el-button>
@@ -261,10 +261,7 @@ watch(
 const activeVariantIndex = computed(() => variants.value.findIndex(item => item.variant_id === activeVariantId.value))
 const activeVariant = computed(() => variants.value.find(item => item.variant_id === activeVariantId.value) || null)
 const targetCount = computed(() => Number(previewData.value?.parsed_requirement?.target_count || 0))
-const allVariantsReady = computed(() => {
-  if (!variants.value.length) return false
-  return variants.value.every(item => item.selected_questions.length > 0)
-})
+const allVariantsReady = computed(() => variants.value.length > 0 && variants.value.every(item => item.selected_questions.length > 0))
 
 function resetState() {
   previewLoading.value = false
@@ -305,8 +302,7 @@ function questionTypeLabel(type) {
 
 function truncateText(text) {
   if (!text) return ''
-  if (text.length <= 180) return text
-  return `${text.slice(0, 180)}...`
+  return text.length <= 180 ? text : `${text.slice(0, 180)}...`
 }
 
 function normalizeVariants(response) {
@@ -321,7 +317,7 @@ function normalizeVariants(response) {
 
   variants.value = incoming.map((item, index) => ({
     variant_id: item.variant_id || `variant-${index + 1}`,
-    sheet_name: item.sheet_name || response?.parsed_requirement?.sheet_name || `AI练习单 ${index + 1}`,
+    sheet_name: item.sheet_name || `AI练习单 ${index + 1}`,
     selected_questions: Array.isArray(item.selected_questions) ? [...item.selected_questions] : [],
     estimated_time: Number(item.estimated_time || 0),
   }))
@@ -375,8 +371,7 @@ async function handlePreview() {
     }
     ElMessage.success(`已为你准备 ${variants.value.length} 套草稿`)
   } catch (error) {
-    const detail = error?.response?.data?.detail
-    ElMessage.error(detail || '生成 AI 预览失败')
+    ElMessage.error(error?.response?.data?.detail || '生成 AI 预览失败')
   } finally {
     previewLoading.value = false
   }
@@ -400,8 +395,7 @@ async function handleReplace(questionId) {
     })
     ElMessage.success('已帮你换了一题')
   } catch (error) {
-    const detail = error?.response?.data?.detail
-    ElMessage.error(detail || '换题失败')
+    ElMessage.error(error?.response?.data?.detail || '换题失败')
   } finally {
     replaceLoadingId.value = ''
   }
@@ -425,8 +419,7 @@ async function handleSupplement() {
     })
     ElMessage.success('已补进一题')
   } catch (error) {
-    const detail = error?.response?.data?.detail
-    ElMessage.error(detail || '补题失败')
+    ElMessage.error(error?.response?.data?.detail || '补题失败')
   } finally {
     supplementLoading.value = false
   }
@@ -440,14 +433,15 @@ async function handleConfirm() {
 
   confirmLoading.value = true
   try {
+    const baseName = sheetName.value.trim() || 'AI练习单'
     const payload = {
-      sheet_name: sheetName.value.trim(),
+      sheet_name: baseName,
       sheet_type: previewData.value?.parsed_requirement?.sheet_type || 'special_topic',
       variants: variants.value
         .filter(item => item.selected_questions.length)
         .map((item, index) => ({
           variant_id: item.variant_id,
-          sheet_name: variants.value.length > 1 ? `${sheetName.value.trim() || 'AI练习单'} ${index + 1}` : (sheetName.value.trim() || item.sheet_name),
+          sheet_name: variants.value.length > 1 ? `${baseName} ${index + 1}` : baseName,
           question_ids: item.selected_questions.map(question => question.question_id),
         })),
     }
@@ -456,8 +450,7 @@ async function handleConfirm() {
     emit('created', res)
     emit('update:modelValue', false)
   } catch (error) {
-    const detail = error?.response?.data?.detail
-    ElMessage.error(detail || '生成练习单失败')
+    ElMessage.error(error?.response?.data?.detail || '生成练习单失败')
   } finally {
     confirmLoading.value = false
   }
