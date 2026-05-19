@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>测试图片上传</title>
+</head>
+<body>
+  <h1>测试图片上传功能</h1>
+
+  <div>
+    <h2>1. 先登录</h2>
+    <input type="text" id="username" placeholder="用户名" value="testuser">
+    <input type="password" id="password" placeholder="密码" value="123456">
+    <button onclick="login()">登录</button>
+    <div id="loginResult"></div>
+  </div>
+
+  <div style="margin-top: 20px;">
+    <h2>2. 上传图片</h2>
+    <input type="file" id="fileInput" accept="image/*">
+    <button onclick="uploadImage()">上传</button>
+    <div id="uploadResult"></div>
+    <div id="preview"></div>
+  </div>
+
+  <script>
+    let token = '';
+
+    async function login() {
+      const username = document.getElementById('username').value;
+      const password = document.getElementById('password').value;
+
+      try {
+        const response = await fetch('/api/auth/login', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ username, password })
+        });
+
+        const data = await response.json();
+
+        if (response.ok) {
+          token = data.access_token;
+          document.getElementById('loginResult').innerHTML =
+            `<p style="color: green;">登录成功！Token: ${token.substring(0, 20)}...</p>`;
+        } else {
+          document.getElementById('loginResult').innerHTML =
+            `<p style="color: red;">登录失败: ${data.detail}</p>`;
+        }
+      } catch (error) {
+        document.getElementById('loginResult').innerHTML =
+          `<p style="color: red;">登录错误: ${error.message}</p>`;
+      }
+    }
+
+    async function uploadImage() {
+      if (!token) {
+        alert('请先登录！');
+        return;
+      }
+
+      const fileInput = document.getElementById('fileInput');
+      const file = fileInput.files[0];
+
+      if (!file) {
+        alert('请选择文件！');
+        return;
+      }
+
+      console.log('开始上传:', file.name, file.type, file.size);
+
+      const formData = new FormData();
+      formData.append('file', file);
+
+      try {
+        const response = await fetch('/api/questions/upload-image', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${token}`
+          },
+          body: formData
+        });
+
+        const data = await response.json();
+        console.log('上传响应:', data);
+
+        if (response.ok) {
+          document.getElementById('uploadResult').innerHTML =
+            `<p style="color: green;">上传成功！</p>
+             <p>URL: ${data.url}</p>
+             <p>文件名: ${data.filename}</p>`;
+
+          document.getElementById('preview').innerHTML =
+            `<img src="${data.url}" style="max-width: 300px; border: 1px solid #ccc; margin-top: 10px;">`;
+        } else {
+          document.getElementById('uploadResult').innerHTML =
+            `<p style="color: red;">上传失败: ${data.detail}</p>`;
+        }
+      } catch (error) {
+        console.error('上传错误:', error);
+        document.getElementById('uploadResult').innerHTML =
+          `<p style="color: red;">上传错误: ${error.message}</p>`;
+      }
+    }
+  </script>
+</body>
+</html>
