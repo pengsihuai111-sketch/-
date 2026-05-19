@@ -1,0 +1,939 @@
+{
+  "_meta": {
+    "version": "2.0",
+    "student_name": "冯紫桐",
+    "generated_at": "2026-05-03",
+    "mode": "semester",
+    "description": "冯紫桐学习状态快照，用于新会话恢复上下文",
+    "question_bank_version": "3.0",
+    "total_available_questions": 200,
+    "last_updated": "2026-05-03",
+    "storage_format": "sharded"
+  },
+  "student_profile": {
+    "name": "冯紫桐",
+    "current_mode": "semester",
+    "total_exams": 7,
+    "total_wrong_questions": 34,
+    "last_exam_date": "2026-05-01",
+    "last_exam_score": 49.5
+  },
+  "knowledge_mastery": {
+    "分数应用题": {
+      "total_attempts": 21,
+      "correct_count": 5,
+      "mastery_rate": 0.238,
+      "status": "weak",
+      "sub_status": null,
+      "trend": "stable",
+      "last_tested": "2026-05-01",
+      "last_reviewed": null,
+      "next_review_due": null,
+      "review_interval_days": 0,
+      "review_count": 0,
+      "forgetting_risk_score": 0,
+      "confusion_pair": null
+    },
+    "行程问题": {
+      "total_attempts": 14,
+      "correct_count": 3,
+      "mastery_rate": 0.214,
+      "status": "weak",
+      "sub_status": null,
+      "trend": "stable",
+      "last_tested": "2026-05-01",
+      "last_reviewed": null,
+      "next_review_due": null,
+      "review_interval_days": 0,
+      "review_count": 0,
+      "forgetting_risk_score": 0,
+      "confusion_pair": null
+    },
+    "工程问题": {
+      "total_attempts": 11,
+      "correct_count": 4,
+      "mastery_rate": 0.364,
+      "status": "partial",
+      "sub_status": null,
+      "trend": "stable",
+      "last_tested": "2026-04-22",
+      "last_reviewed": null,
+      "next_review_due": null,
+      "review_interval_days": 0,
+      "review_count": 0,
+      "forgetting_risk_score": 0,
+      "confusion_pair": null
+    },
+    "几何面积": {
+      "total_attempts": 17,
+      "correct_count": 6,
+      "mastery_rate": 0.353,
+      "status": "partial",
+      "sub_status": null,
+      "trend": "up",
+      "last_tested": "2026-05-01",
+      "last_reviewed": null,
+      "next_review_due": null,
+      "review_interval_days": 0,
+      "review_count": 0,
+      "forgetting_risk_score": 0,
+      "confusion_pair": "立体图形体积"
+    },
+    "比和比例": {
+      "total_attempts": 14,
+      "correct_count": 5,
+      "mastery_rate": 0.357,
+      "status": "partial",
+      "sub_status": null,
+      "trend": "stable",
+      "last_tested": "2026-04-22",
+      "last_reviewed": null,
+      "next_review_due": null,
+      "review_interval_days": 0,
+      "review_count": 0,
+      "forgetting_risk_score": 0,
+      "confusion_pair": "正比例与反比例"
+    },
+    "经济问题": {
+      "total_attempts": 11,
+      "correct_count": 3,
+      "mastery_rate": 0.273,
+      "status": "weak",
+      "sub_status": null,
+      "trend": "down",
+      "last_tested": "2026-04-29",
+      "last_reviewed": null,
+      "next_review_due": null,
+      "review_interval_days": 0,
+      "review_count": 0,
+      "forgetting_risk_score": 0,
+      "confusion_pair": null
+    },
+    "浓度问题": {
+      "total_attempts": 8,
+      "correct_count": 2,
+      "mastery_rate": 0.25,
+      "status": "weak",
+      "sub_status": null,
+      "trend": "stable",
+      "last_tested": "2026-05-01",
+      "last_reviewed": null,
+      "next_review_due": null,
+      "review_interval_days": 0,
+      "review_count": 0,
+      "forgetting_risk_score": 0,
+      "confusion_pair": null
+    },
+    "定义新运算": {
+      "total_attempts": 3,
+      "correct_count": 1,
+      "mastery_rate": 0.333,
+      "status": "weak",
+      "sub_status": null,
+      "trend": "stable",
+      "last_tested": "2026-05-01",
+      "last_reviewed": null,
+      "next_review_due": null,
+      "review_interval_days": 0,
+      "review_count": 0,
+      "forgetting_risk_score": 0,
+      "confusion_pair": null
+    },
+    "逻辑推理": {
+      "total_attempts": 4,
+      "correct_count": 1,
+      "mastery_rate": 0.25,
+      "status": "weak",
+      "sub_status": null,
+      "trend": "stable",
+      "last_tested": "2026-05-01",
+      "last_reviewed": null,
+      "next_review_due": null,
+      "review_interval_days": 0,
+      "review_count": 0,
+      "forgetting_risk_score": 0,
+      "confusion_pair": null
+    },
+    "平均数": {
+      "total_attempts": 4,
+      "correct_count": 1,
+      "mastery_rate": 0.25,
+      "status": "weak",
+      "sub_status": null,
+      "trend": "down",
+      "last_tested": "2026-04-08",
+      "last_reviewed": null,
+      "next_review_due": null,
+      "review_interval_days": 0,
+      "review_count": 0,
+      "forgetting_risk_score": 0,
+      "confusion_pair": null
+    },
+    "简便运算": {
+      "total_attempts": 18,
+      "correct_count": 8,
+      "mastery_rate": 0.444,
+      "status": "partial",
+      "sub_status": null,
+      "trend": "stable",
+      "last_tested": "2026-05-01",
+      "last_reviewed": null,
+      "next_review_due": null,
+      "review_interval_days": 0,
+      "review_count": 0,
+      "forgetting_risk_score": 0,
+      "confusion_pair": null
+    },
+    "解方程": {
+      "total_attempts": 11,
+      "correct_count": 6,
+      "mastery_rate": 0.545,
+      "status": "partial",
+      "sub_status": null,
+      "trend": "up",
+      "last_tested": "2026-05-01",
+      "last_reviewed": null,
+      "next_review_due": null,
+      "review_interval_days": 0,
+      "review_count": 0,
+      "forgetting_risk_score": 0,
+      "confusion_pair": null
+    },
+    "单位换算": {
+      "total_attempts": 6,
+      "correct_count": 4,
+      "mastery_rate": 0.667,
+      "status": "improving",
+      "sub_status": "巩固期",
+      "trend": "up",
+      "last_tested": "2026-05-01",
+      "last_reviewed": null,
+      "next_review_due": "2026-05-03",
+      "review_interval_days": 1,
+      "review_count": 0,
+      "forgetting_risk_score": 0,
+      "confusion_pair": null
+    },
+    "圆柱与圆锥": {
+      "total_attempts": 10,
+      "correct_count": 4,
+      "mastery_rate": 0.4,
+      "status": "partial",
+      "sub_status": null,
+      "trend": "stable",
+      "last_tested": "2026-05-01",
+      "last_reviewed": null,
+      "next_review_due": null,
+      "review_interval_days": 0,
+      "review_count": 0,
+      "forgetting_risk_score": 0,
+      "confusion_pair": null
+    },
+    "找规律": {
+      "total_attempts": 7,
+      "correct_count": 2,
+      "mastery_rate": 0.286,
+      "status": "partial",
+      "sub_status": null,
+      "trend": "stable",
+      "last_tested": "2026-05-01",
+      "last_reviewed": null,
+      "next_review_due": null,
+      "review_interval_days": 0,
+      "review_count": 0,
+      "forgetting_risk_score": 0,
+      "confusion_pair": null
+    },
+    "最大公因数与最小公倍数": {
+      "total_attempts": 4,
+      "correct_count": 2,
+      "mastery_rate": 0.5,
+      "status": "partial",
+      "sub_status": null,
+      "trend": "stable",
+      "last_tested": "2026-04-22",
+      "last_reviewed": null,
+      "next_review_due": null,
+      "review_interval_days": 0,
+      "review_count": 0,
+      "forgetting_risk_score": 0,
+      "confusion_pair": "因数与倍数"
+    },
+    "因数与倍数": {
+      "total_attempts": 7,
+      "correct_count": 3,
+      "mastery_rate": 0.429,
+      "status": "partial",
+      "sub_status": null,
+      "trend": "stable",
+      "last_tested": "2026-04-22",
+      "last_reviewed": null,
+      "next_review_due": null,
+      "review_interval_days": 0,
+      "review_count": 0,
+      "forgetting_risk_score": 0,
+      "confusion_pair": "最大公因数与最小公倍数"
+    },
+    "鸡兔同笼": {
+      "total_attempts": 4,
+      "correct_count": 2,
+      "mastery_rate": 0.5,
+      "status": "partial",
+      "sub_status": null,
+      "trend": "stable",
+      "last_tested": "2026-04-22",
+      "last_reviewed": null,
+      "next_review_due": null,
+      "review_interval_days": 0,
+      "review_count": 0,
+      "forgetting_risk_score": 0,
+      "confusion_pair": null
+    },
+    "正负数": {
+      "total_attempts": 4,
+      "correct_count": 2,
+      "mastery_rate": 0.5,
+      "status": "partial",
+      "sub_status": null,
+      "trend": "stable",
+      "last_tested": "2026-05-01",
+      "last_reviewed": null,
+      "next_review_due": null,
+      "review_interval_days": 0,
+      "review_count": 0,
+      "forgetting_risk_score": 0,
+      "confusion_pair": null
+    },
+    "统计图表": {
+      "total_attempts": 2,
+      "correct_count": 1,
+      "mastery_rate": 0.5,
+      "status": "partial",
+      "sub_status": null,
+      "trend": "stable",
+      "last_tested": "2026-04-29",
+      "last_reviewed": null,
+      "next_review_due": null,
+      "review_interval_days": 0,
+      "review_count": 0,
+      "forgetting_risk_score": 0,
+      "confusion_pair": null
+    }
+  },
+  "wrong_question_bank": [
+    {
+      "wq_id": "WQ001",
+      "knowledge_point": "分数应用题",
+      "original_question_text": "一桶油用去3/5后，又加入12千克，这时桶里的油正好是原来的2/3。桶里原有油多少千克？",
+      "first_error_exam": "E001",
+      "error_count": 5,
+      "category": "完全不懂",
+      "is_mastered": false,
+      "redo_status": {
+        "first_error_date": "E001",
+        "first_redo_result": null,
+        "is_mastered_after_redo": false,
+        "needs_intensive_practice": false
+      }
+    },
+    {
+      "wq_id": "WQ002",
+      "knowledge_point": "行程问题",
+      "original_question_text": "甲乙两地相距240千米，一辆汽车从甲地开往乙地，已经行了全程的3/4，这时离乙地还有多少千米？",
+      "first_error_exam": "E001",
+      "error_count": 4,
+      "category": "完全不懂",
+      "is_mastered": false,
+      "redo_status": {
+        "first_error_date": "E001",
+        "first_redo_result": null,
+        "is_mastered_after_redo": false,
+        "needs_intensive_practice": false
+      }
+    },
+    {
+      "wq_id": "WQ003",
+      "knowledge_point": "浓度问题",
+      "original_question_text": "现有浓度为15%的盐水200克，要使其浓度变为20%，需要加入多少克盐？",
+      "first_error_exam": "E002",
+      "error_count": 3,
+      "category": "完全不懂",
+      "is_mastered": false,
+      "redo_status": {
+        "first_error_date": "E002",
+        "first_redo_result": null,
+        "is_mastered_after_redo": false,
+        "needs_intensive_practice": false
+      }
+    },
+    {
+      "wq_id": "WQ004",
+      "knowledge_point": "几何面积",
+      "original_question_text": "一个三角形的三个内角度数的比是3∶2∶4，这是一个（    ）三角形，若三角形内角之比是1∶2∶3，那么这个三角形是（    ）三角形。（填形状）",
+      "first_error_exam": "E001",
+      "error_count": 1,
+      "category": "懂一部分",
+      "is_mastered": false,
+      "redo_status": {
+        "first_error_date": "E001",
+        "first_redo_result": null,
+        "is_mastered_after_redo": false,
+        "needs_intensive_practice": false
+      }
+    },
+    {
+      "wq_id": "WQ005",
+      "knowledge_point": "定义新运算",
+      "original_question_text": "在一新运算中，我们规定：X※Y=(AX+Y)/(XY)，且5※6=6※5（其中A为常数），则(4※2)×(1※10)=（    ）",
+      "first_error_exam": "E001",
+      "error_count": 1,
+      "category": "懂一部分",
+      "is_mastered": false,
+      "redo_status": {
+        "first_error_date": "E001",
+        "first_redo_result": null,
+        "is_mastered_after_redo": false,
+        "needs_intensive_practice": false
+      }
+    },
+    {
+      "wq_id": "WQ006",
+      "knowledge_point": "最大公因数与最小公倍数",
+      "original_question_text": "15、18、25的最大公因数是（    ），最小公倍数是（    ）。",
+      "first_error_exam": "E001",
+      "error_count": 1,
+      "category": "懂一部分",
+      "is_mastered": false,
+      "redo_status": {
+        "first_error_date": "E001",
+        "first_redo_result": null,
+        "is_mastered_after_redo": false,
+        "needs_intensive_practice": false
+      }
+    },
+    {
+      "wq_id": "WQ007",
+      "knowledge_point": "最大公因数与最小公倍数",
+      "original_question_text": "若甲、乙两数之比为5∶3，它们的最大公因数和最小公倍数的和为80，则甲乙两数的和是（    ）。",
+      "first_error_exam": "E001",
+      "error_count": 1,
+      "category": "懂一部分",
+      "is_mastered": false,
+      "redo_status": {
+        "first_error_date": "E001",
+        "first_redo_result": null,
+        "is_mastered_after_redo": false,
+        "needs_intensive_practice": false
+      }
+    },
+    {
+      "wq_id": "WQ008",
+      "knowledge_point": "找规律",
+      "original_question_text": "观察下面图形我们可以发现：第1个图中有1个正方形，第2个图中有5个正方形，第3个图中有14个正方形，按照这种规律下去的第5个图形共有（    ）个正方形。",
+      "first_error_exam": "E001",
+      "error_count": 1,
+      "category": "懂一部分",
+      "is_mastered": false,
+      "redo_status": {
+        "first_error_date": "E001",
+        "first_redo_result": null,
+        "is_mastered_after_redo": false,
+        "needs_intensive_practice": false
+      }
+    },
+    {
+      "wq_id": "WQ009",
+      "knowledge_point": "鸡兔同笼",
+      "original_question_text": "在一次\"人与自然\"知识竞赛中，竞赛试题共有25道题。每道题都给出4个答案，其中只有一个答案正确。要求学生把正确答案选出来，每道题选对得4分，不选或选错倒扣2分。如果一个学生本次竞赛中的得分要不低于60",
+      "first_error_exam": "E001",
+      "error_count": 1,
+      "category": "懂一部分",
+      "is_mastered": false,
+      "redo_status": {
+        "first_error_date": "E001",
+        "first_redo_result": null,
+        "is_mastered_after_redo": false,
+        "needs_intensive_practice": false
+      }
+    },
+    {
+      "wq_id": "WQ010",
+      "knowledge_point": "圆柱与圆锥",
+      "original_question_text": "一个圆锥体和一个圆柱体的体积比是8∶9，它们的底面半径的比是3∶2，那么该圆锥体和圆柱体高的比是（    ）。",
+      "first_error_exam": "E001",
+      "error_count": 1,
+      "category": "懂一部分",
+      "is_mastered": false,
+      "redo_status": {
+        "first_error_date": "E001",
+        "first_redo_result": null,
+        "is_mastered_after_redo": false,
+        "needs_intensive_practice": false
+      }
+    },
+    {
+      "wq_id": "WQ011",
+      "knowledge_point": "几何面积",
+      "original_question_text": "如图，甲、乙都是正方形，甲边长8cm，乙边长6cm，阴影部分的面积为（    ）cm²。",
+      "first_error_exam": "E001",
+      "error_count": 1,
+      "category": "懂一部分",
+      "is_mastered": false,
+      "redo_status": {
+        "first_error_date": "E001",
+        "first_redo_result": null,
+        "is_mastered_after_redo": false,
+        "needs_intensive_practice": false
+      }
+    },
+    {
+      "wq_id": "WQ012",
+      "knowledge_point": "简便运算",
+      "original_question_text": "计算：2÷3又1/6 + 5又1/12 + 7又1/20 + 11又1/30 + 13又1/42",
+      "first_error_exam": "E001",
+      "error_count": 1,
+      "category": "懂一部分",
+      "is_mastered": false,
+      "redo_status": {
+        "first_error_date": "E001",
+        "first_redo_result": null,
+        "is_mastered_after_redo": false,
+        "needs_intensive_practice": false
+      }
+    },
+    {
+      "wq_id": "WQ013",
+      "knowledge_point": "简便运算",
+      "original_question_text": "计算：29又1/2 × 2/3 + 39又1/3 × 3/4 + 49又1/4 × 4/5 + 59又1/5 × 5/6",
+      "first_error_exam": "E001",
+      "error_count": 1,
+      "category": "懂一部分",
+      "is_mastered": false,
+      "redo_status": {
+        "first_error_date": "E001",
+        "first_redo_result": null,
+        "is_mastered_after_redo": false,
+        "needs_intensive_practice": false
+      }
+    },
+    {
+      "wq_id": "WQ014",
+      "knowledge_point": "经济问题",
+      "original_question_text": "一家水果店决定把一批荔枝的价格降到原定价的7/8卖出，这样所得的利润就只有原计划的一半。已知这批荔枝的进价是每千克4元，原计划可获得利润2400元，那么这批荔枝一共有多少千克？",
+      "first_error_exam": "E001",
+      "error_count": 1,
+      "category": "懂一部分",
+      "is_mastered": false,
+      "redo_status": {
+        "first_error_date": "E001",
+        "first_redo_result": null,
+        "is_mastered_after_redo": false,
+        "needs_intensive_practice": false
+      }
+    },
+    {
+      "wq_id": "WQ015",
+      "knowledge_point": "工程问题",
+      "original_question_text": "由于天气逐渐冷起来，牧场上的草不仅不长，反而以固定的速度在减少。如果某块草地上的草可供25头牛吃4天，或可供16头牛吃6天，那么可供10头牛吃多少天？",
+      "first_error_exam": "E001",
+      "error_count": 1,
+      "category": "懂一部分",
+      "is_mastered": false,
+      "redo_status": {
+        "first_error_date": "E001",
+        "first_redo_result": null,
+        "is_mastered_after_redo": false,
+        "needs_intensive_practice": false
+      }
+    },
+    {
+      "wq_id": "WQ016",
+      "knowledge_point": "分数应用题",
+      "original_question_text": "有一堆苹果放在甲、乙两个筐中都没有放满。如果把甲筐苹果倒入乙中，乙还能再放10个；如果把乙筐苹果全部倒入甲中，乙还剩20个。已知乙筐装满后苹果的个数是甲筐装满后的2.5倍，这批苹果共有多少个？",
+      "first_error_exam": "E001",
+      "error_count": 1,
+      "category": "懂一部分",
+      "is_mastered": false,
+      "redo_status": {
+        "first_error_date": "E001",
+        "first_redo_result": null,
+        "is_mastered_after_redo": false,
+        "needs_intensive_practice": false
+      }
+    },
+    {
+      "wq_id": "WQ017",
+      "knowledge_point": "比和比例",
+      "original_question_text": "一班和二班的人数之比是8∶7，如果一班将有8名同学调到二班去，则一班是二班人数的4/5，求原来两班各有多少人？",
+      "first_error_exam": "E001",
+      "error_count": 1,
+      "category": "懂一部分",
+      "is_mastered": false,
+      "redo_status": {
+        "first_error_date": "E001",
+        "first_redo_result": null,
+        "is_mastered_after_redo": false,
+        "needs_intensive_practice": false
+      }
+    },
+    {
+      "wq_id": "WQ018",
+      "knowledge_point": "比和比例",
+      "original_question_text": "巴蜀中学购置了笔记本电脑和台式电脑共120台，已知笔记本电脑的台数比台式电脑的台数的1/5多60台，求购置的笔记本和台式电脑各有多少台？",
+      "first_error_exam": "E001",
+      "error_count": 1,
+      "category": "懂一部分",
+      "is_mastered": false,
+      "redo_status": {
+        "first_error_date": "E001",
+        "first_redo_result": null,
+        "is_mastered_after_redo": false,
+        "needs_intensive_practice": false
+      }
+    },
+    {
+      "wq_id": "WQ019",
+      "knowledge_point": "行程问题",
+      "original_question_text": "甲、乙两人同时从A点背向出发，沿400米环形跑道行走，甲每分钟走80米，乙每分钟走50米，这两人至少用多少分钟再在A点相遇？",
+      "first_error_exam": "E001",
+      "error_count": 1,
+      "category": "懂一部分",
+      "is_mastered": false,
+      "redo_status": {
+        "first_error_date": "E001",
+        "first_redo_result": null,
+        "is_mastered_after_redo": false,
+        "needs_intensive_practice": false
+      }
+    },
+    {
+      "wq_id": "WQ020",
+      "knowledge_point": "几何面积",
+      "original_question_text": "三角形ABC的面积为10，且AR=2RC，CP=2BP，BQ=QA，求三角形PRQ的面积是多少？",
+      "first_error_exam": "E001",
+      "error_count": 1,
+      "category": "懂一部分",
+      "is_mastered": false,
+      "redo_status": {
+        "first_error_date": "E001",
+        "first_redo_result": null,
+        "is_mastered_after_redo": false,
+        "needs_intensive_practice": false
+      }
+    },
+    {
+      "wq_id": "WQ021",
+      "knowledge_point": "行程问题",
+      "original_question_text": "表盘上4:10时，时针与分针的夹角是（    ）度。",
+      "first_error_exam": "E007",
+      "error_count": 1,
+      "category": "懂一部分",
+      "is_mastered": false,
+      "redo_status": {
+        "first_error_date": "E007",
+        "first_redo_result": null,
+        "is_mastered_after_redo": false,
+        "needs_intensive_practice": false
+      }
+    },
+    {
+      "wq_id": "WQ022",
+      "knowledge_point": "几何面积",
+      "original_question_text": "如图所示，任意四边形ABCD，E是AB中点，F是CD中点，已知四边形ABCD面积是10，则阴影部分（四边形AEFD）的面积是（    ）。",
+      "first_error_exam": "E007",
+      "error_count": 1,
+      "category": "懂一部分",
+      "is_mastered": false,
+      "redo_status": {
+        "first_error_date": "E007",
+        "first_redo_result": null,
+        "is_mastered_after_redo": false,
+        "needs_intensive_practice": false
+      }
+    },
+    {
+      "wq_id": "WQ023",
+      "knowledge_point": "几何面积",
+      "original_question_text": "线段AB长12cm，D是线段AB上一点，且与AB的中点相距2cm，则线段AD长为（    ）cm。",
+      "first_error_exam": "E007",
+      "error_count": 1,
+      "category": "懂一部分",
+      "is_mastered": false,
+      "redo_status": {
+        "first_error_date": "E007",
+        "first_redo_result": null,
+        "is_mastered_after_redo": false,
+        "needs_intensive_practice": false
+      }
+    },
+    {
+      "wq_id": "WQ024",
+      "knowledge_point": "行程问题",
+      "original_question_text": "一位少年短跑选手，顺风跑90米用了10秒，在同样的风速下逆风跑70米，也用了10秒，则在无风时他跑100米要用（    ）秒。",
+      "first_error_exam": "E007",
+      "error_count": 1,
+      "category": "懂一部分",
+      "is_mastered": false,
+      "redo_status": {
+        "first_error_date": "E007",
+        "first_redo_result": null,
+        "is_mastered_after_redo": false,
+        "needs_intensive_practice": false
+      }
+    },
+    {
+      "wq_id": "WQ025",
+      "knowledge_point": "因数与倍数",
+      "original_question_text": "从1-9这9个数中选取6个数，组成3个两位数的质数，并使这三个质数的和也是质数，并且和要尽可能小，这三个质数的和是（    ）。",
+      "first_error_exam": "E007",
+      "error_count": 1,
+      "category": "懂一部分",
+      "is_mastered": false,
+      "redo_status": {
+        "first_error_date": "E007",
+        "first_redo_result": null,
+        "is_mastered_after_redo": false,
+        "needs_intensive_practice": false
+      }
+    },
+    {
+      "wq_id": "WQ026",
+      "knowledge_point": "几何面积",
+      "original_question_text": "如图是一个正方体（面上标有数字），它的展开图可能是下面四个展开图中的（    ）。",
+      "first_error_exam": "E007",
+      "error_count": 1,
+      "category": "懂一部分",
+      "is_mastered": false,
+      "redo_status": {
+        "first_error_date": "E007",
+        "first_redo_result": null,
+        "is_mastered_after_redo": false,
+        "needs_intensive_practice": false
+      }
+    },
+    {
+      "wq_id": "WQ027",
+      "knowledge_point": "分数应用题",
+      "original_question_text": "一个分数的分子缩小1/2，分母扩大到2倍，分数值（    ）。A.不变 B.扩大到2倍 C.缩小到1/4 D.扩大到4倍",
+      "first_error_exam": "E007",
+      "error_count": 1,
+      "category": "懂一部分",
+      "is_mastered": false,
+      "redo_status": {
+        "first_error_date": "E007",
+        "first_redo_result": null,
+        "is_mastered_after_redo": false,
+        "needs_intensive_practice": false
+      }
+    },
+    {
+      "wq_id": "WQ028",
+      "knowledge_point": "简便运算",
+      "original_question_text": "计算：(1×2×4+2×4×8+3×6×12+…+10×20×40)/(1×3×6+2×6×12+3×9×18+…+10×30×60)",
+      "first_error_exam": "E007",
+      "error_count": 1,
+      "category": "懂一部分",
+      "is_mastered": false,
+      "redo_status": {
+        "first_error_date": "E007",
+        "first_redo_result": null,
+        "is_mastered_after_redo": false,
+        "needs_intensive_practice": false
+      }
+    },
+    {
+      "wq_id": "WQ029",
+      "knowledge_point": "简便运算",
+      "original_question_text": "计算：1000+999−998−997+996+995−994−993+…+108+107−106−105+104+103−102−101",
+      "first_error_exam": "E007",
+      "error_count": 1,
+      "category": "懂一部分",
+      "is_mastered": false,
+      "redo_status": {
+        "first_error_date": "E007",
+        "first_redo_result": null,
+        "is_mastered_after_redo": false,
+        "needs_intensive_practice": false
+      }
+    },
+    {
+      "wq_id": "WQ030",
+      "knowledge_point": "行程问题",
+      "original_question_text": "已知某铁路桥长800米，现有一列火车从桥上通过，测得火车从开始上桥到完全过桥共用45秒，整列火车完全在桥上的时间是35秒，求火车的速度和长度。",
+      "first_error_exam": "E007",
+      "error_count": 1,
+      "category": "懂一部分",
+      "is_mastered": false,
+      "redo_status": {
+        "first_error_date": "E007",
+        "first_redo_result": null,
+        "is_mastered_after_redo": false,
+        "needs_intensive_practice": false
+      }
+    },
+    {
+      "wq_id": "WQ031",
+      "knowledge_point": "分数应用题",
+      "original_question_text": "有甲、乙两包糖，甲包中有30颗，如果从乙包中拿出1/5放入甲包，那么乙包比甲包还多3颗，乙包中原来有多少颗糖？",
+      "first_error_exam": "E007",
+      "error_count": 1,
+      "category": "懂一部分",
+      "is_mastered": false,
+      "redo_status": {
+        "first_error_date": "E007",
+        "first_redo_result": null,
+        "is_mastered_after_redo": false,
+        "needs_intensive_practice": false
+      }
+    },
+    {
+      "wq_id": "WQ032",
+      "knowledge_point": "圆柱与圆锥",
+      "original_question_text": "一堆黄沙成圆锥形，底面周长25.12m，高1.5m，每立方米黄沙约重1.5吨，这堆黄沙大约重多少吨？",
+      "first_error_exam": "E007",
+      "error_count": 1,
+      "category": "懂一部分",
+      "is_mastered": false,
+      "redo_status": {
+        "first_error_date": "E007",
+        "first_redo_result": null,
+        "is_mastered_after_redo": false,
+        "needs_intensive_practice": false
+      }
+    },
+    {
+      "wq_id": "WQ033",
+      "knowledge_point": "几何面积",
+      "original_question_text": "正方形ABCD的边长为1厘米，依次以A、B、C、D为圆心，以AD、BE、CF、DG为半径画出扇形，求四个扇形的面积和。",
+      "first_error_exam": "E007",
+      "error_count": 1,
+      "category": "懂一部分",
+      "is_mastered": false,
+      "redo_status": {
+        "first_error_date": "E007",
+        "first_redo_result": null,
+        "is_mastered_after_redo": false,
+        "needs_intensive_practice": false
+      }
+    },
+    {
+      "wq_id": "WQ034",
+      "knowledge_point": "定义新运算",
+      "original_question_text": "若一个正整数，它的各位数字是左右对称的，则称这个数是谋略数。最小的谋略数是11。（1）直接写出57产生的第一个谋略数；（2）证明：将任意一个四位谋略数分解为前两位数和后两位数，这两个数的差一定能被9整",
+      "first_error_exam": "E007",
+      "error_count": 1,
+      "category": "懂一部分",
+      "is_mastered": false,
+      "redo_status": {
+        "first_error_date": "E007",
+        "first_redo_result": null,
+        "is_mastered_after_redo": false,
+        "needs_intensive_practice": false
+      }
+    }
+  ],
+  "exam_history_summary": [
+    {
+      "exam_id": "E001",
+      "exam_date": "2026-04-01",
+      "exam_name": "综合练习（一）",
+      "score": 44,
+      "total_score": 100,
+      "wrong_count": 17,
+      "knowledge_point_errors": {
+        "几何面积": 3,
+        "定义新运算": 1,
+        "最大公因数与最小公倍数": 2,
+        "找规律": 1,
+        "鸡兔同笼": 1,
+        "圆柱与圆锥": 1,
+        "简便运算": 2,
+        "经济问题": 1,
+        "工程问题": 1,
+        "分数应用题": 1,
+        "比和比例": 2,
+        "行程问题": 1
+      }
+    },
+    {
+      "exam_id": "E002",
+      "exam_date": "2026-04-08",
+      "exam_name": "综合练习（二）",
+      "score": 24,
+      "total_score": 100,
+      "wrong_count": 3,
+      "knowledge_point_errors": {
+        "分数应用题": 1,
+        "比和比例": 1,
+        "平均数": 1
+      }
+    },
+    {
+      "exam_id": "E003",
+      "exam_date": "2026-04-15",
+      "exam_name": "综合练习（三）",
+      "score": 24,
+      "total_score": 100,
+      "wrong_count": 2,
+      "knowledge_point_errors": {
+        "分数应用题": 1,
+        "浓度问题": 1
+      }
+    },
+    {
+      "exam_id": "E004",
+      "exam_date": "2026-04-22",
+      "exam_name": "综合练习（四）",
+      "score": 43,
+      "total_score": 100,
+      "wrong_count": 2,
+      "knowledge_point_errors": {
+        "工程问题": 1,
+        "几何面积": 1
+      }
+    },
+    {
+      "exam_id": "E005",
+      "exam_date": "2026-04-29",
+      "exam_name": "综合练习（五）",
+      "score": 32,
+      "total_score": 100,
+      "wrong_count": 2,
+      "knowledge_point_errors": {
+        "经济问题": 1,
+        "圆柱与圆锥": 1
+      }
+    },
+    {
+      "exam_id": "E006",
+      "exam_date": "2026-05-01",
+      "exam_name": "综合练习（六）",
+      "score": 34,
+      "total_score": 100,
+      "wrong_count": 2,
+      "knowledge_point_errors": {
+        "浓度问题": 1,
+        "逻辑推理": 1
+      }
+    },
+    {
+      "exam_id": "E007",
+      "exam_date": "2026-05-01",
+      "exam_name": "综合练习（七）",
+      "score": 49.5,
+      "total_score": 100,
+      "wrong_count": 14,
+      "knowledge_point_errors": {
+        "行程问题": 3,
+        "几何面积": 4,
+        "因数与倍数": 1,
+        "分数应用题": 2,
+        "简便运算": 2,
+        "圆柱与圆锥": 1,
+        "定义新运算": 1
+      }
+    }
+  ],
+  "generated_questions": [],
+  "current_week_plan": null
+}
