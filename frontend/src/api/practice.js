@@ -4,6 +4,30 @@ export function generateSheet(data) {
   return request.post('/practice/generate', data)
 }
 
+export function aiGeneratePreview(data) {
+  return request.post('/practice/ai-generate-preview', data, {
+    timeout: 180000,
+  })
+}
+
+export function aiGenerateConfirm(data) {
+  return request.post('/practice/ai-generate-confirm', data, {
+    timeout: 60000,
+  })
+}
+
+export function aiReplaceQuestion(data) {
+  return request.post('/practice/ai-replace-question', data, {
+    timeout: 30000,
+  })
+}
+
+export function aiSupplementQuestion(data) {
+  return request.post('/practice/ai-supplement-question', data, {
+    timeout: 30000,
+  })
+}
+
 export function generateWeekSheets() {
   return request.post('/practice/generate-week')
 }
@@ -104,6 +128,12 @@ export function getRecognitionProgress(taskId) {
 
 export function getRecognitionTask(taskId) {
   return request.get(`/wrong-questions/recognition-tasks/${taskId}`)
+}
+
+export function prepareRecognitionConfirmation(taskId) {
+  return request.post(`/wrong-questions/recognition-tasks/${taskId}/prepare-confirmation`, null, {
+    timeout: 180000,
+  })
 }
 
 export function confirmRecognitionTask(taskId, data) {

@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 from typing import List, Optional
 from datetime import date, timedelta
 from PIL import Image
+import fitz
 
 from ..database import get_db, SessionLocal
 from ..models import (
@@ -31,7 +32,8 @@ from ..schemas import (
 )
 from ..models import ErrorType
 from ..utils.auth import get_current_user_id
-from ..utils.deepseek import recognize_questions, generate_answer, analyze_page_structure, recognize_single_question, match_question_candidates
+from ..utils.deepseek import recognize_questions, generate_answer, analyze_page_structure, recognize_single_question, match_question_candidates, call_text_llm
+from ..utils.recognition_config import RecognitionStrategy
 from ..utils.pdf_processor import pdf_to_images
 from ..utils.pdf_to_markdown import pdf_to_markdown, extract_questions_from_markdown
 from ..utils.image_processing import (
@@ -217,9 +219,14 @@ def list_wrong_questions(
                 ai_answer = block.ai_answer
                 ai_solution = block.ai_solution
 
+        created_date = r.created_date.isoformat() if r.created_date else None
+
         result.append({
             "record_id": r.record_id,
             "question_id": r.question_id,
+            "created_date": created_date,
+            "created_at": created_date,
+            "createdDate": created_date,
             "exam_name": r.exam_name,
             "exam_date": r.exam_date.isoformat() if r.exam_date else None,
             "error_type": r.error_type if r.error_type else None,
@@ -270,6 +277,8 @@ def add_wrong_question(
     _update_mastery(user_id, q.knowledge_point, False, db)
 
     db.commit()
+
+
     return {"message": "已添加到错题本", "record_id": record.record_id}
 
 
@@ -279,14 +288,16 @@ async def _batch_generate_and_dedup(
     questions: list,
     db: Session,
     user_id: int,
+    generate_missing_answers: bool = False,
 ) -> tuple:
-    """并行生成答案 + 顺序查重，就地修改 questions。
+    """补全已知答案 + 顺序查重，就地修改 questions。
 
     返回 (generated_answer, generated_solution, dedup_status, matched_question_id)。
     """
-    # Phase 1: 并行生成答案（跳过已有答案的题目）
+    # Phase 1: 可选并行生成答案。默认关闭，避免识别链路在视觉模型
+    # 已经给出答案后又额外等待一轮文本模型。
     async def _gen(q):
-        if not q.get("question_text", "").strip() or q.get("answer"):
+        if not generate_missing_answers or not q.get("question_text", "").strip() or q.get("answer"):
             return None
         try:
             return await generate_answer(
@@ -300,8 +311,8 @@ async def _batch_generate_and_dedup(
     ans_results = await asyncio.gather(*[_gen(q) for q in questions])
 
     # Phase 2: 顺序查重（DB session 不能并发使用）
-    generated_answer = ""
-    generated_solution = ""
+    generated_answer = questions[0].get("answer", "") if questions else ""
+    generated_solution = questions[0].get("solution", "") if questions else ""
     dedup_status = "new"
     matched_question_id = None
 
@@ -336,11 +347,766 @@ async def _batch_generate_and_dedup(
             if qi == 0:
                 matched_question_id = best_q.question_id
                 dedup_status = "in_wrong" if in_wrong else "in_bank"
-            if qi > 0 and not q.get("answer"):
+            if not q.get("answer"):
                 q["answer"] = best_q.answer
+            if not q.get("solution"):
                 q["solution"] = best_q.solution
 
     return generated_answer, generated_solution, dedup_status, matched_question_id
+
+
+def _needs_answer_backfill(question: Optional[Question]) -> bool:
+    """Whether the question still needs AI answer/solution backfill."""
+    if not question:
+        return False
+    if not (question.question_text or "").strip():
+        return False
+    return not (question.answer or "").strip() or not (question.solution or "").strip()
+
+
+async def _backfill_question_answers_background(task_id: int, question_ids: List[int]):
+    """Generate missing answer/solution after user confirms recognized questions."""
+    if not question_ids:
+        return
+
+    db = SessionLocal()
+    try:
+        unique_ids = []
+        seen = set()
+        for question_id in question_ids:
+            if question_id and question_id not in seen:
+                seen.add(question_id)
+                unique_ids.append(question_id)
+
+        logger.info(
+            "Starting async answer backfill for task %s: %s question(s)",
+            task_id,
+            len(unique_ids),
+        )
+
+        for question_id in unique_ids:
+            question = (
+                db.query(Question)
+                .filter(Question.question_id == question_id)
+                .first()
+            )
+            if not _needs_answer_backfill(question):
+                continue
+
+            try:
+                result = await generate_answer(
+                    question.question_text,
+                    question.question_type or "",
+                    question.knowledge_point or "",
+                )
+            except Exception as e:
+                logger.warning(
+                    "Async answer backfill failed for question %s: %s",
+                    question_id,
+                    e,
+                )
+                continue
+
+            answer = (result or {}).get("answer", "").strip()
+            solution = (result or {}).get("solution", "").strip()
+            if not answer and not solution:
+                continue
+
+            changed = False
+            if answer and not (question.answer or "").strip():
+                question.answer = answer
+                changed = True
+            if solution and not (question.solution or "").strip():
+                question.solution = solution
+                changed = True
+
+            blocks = (
+                db.query(WrongQuestionRecognitionBlock)
+                .filter(
+                    WrongQuestionRecognitionBlock.task_id == task_id,
+                    WrongQuestionRecognitionBlock.matched_question_id == question_id,
+                )
+                .all()
+            )
+            for block in blocks:
+                if answer and not (block.ai_answer or "").strip():
+                    block.ai_answer = answer
+                    changed = True
+                if solution and not (block.ai_solution or "").strip():
+                    block.ai_solution = solution
+                    changed = True
+
+            if changed:
+                db.commit()
+                logger.info(
+                    "Async answer backfill completed for question %s (task %s)",
+                    question_id,
+                    task_id,
+                )
+
+    except Exception as e:
+        db.rollback()
+        logger.error(
+            "Async answer backfill task failed for recognition task %s: %s",
+            task_id,
+            e,
+            exc_info=True,
+        )
+    finally:
+        db.close()
+
+
+def _parse_knowledge_points(raw_value) -> List[str]:
+    """Parse stored knowledge points JSON/string into a clean list."""
+    if not raw_value:
+        return []
+    if isinstance(raw_value, list):
+        return [str(item).strip() for item in raw_value if str(item).strip()]
+    if isinstance(raw_value, str):
+        try:
+            parsed = json.loads(raw_value)
+            if isinstance(parsed, list):
+                return [str(item).strip() for item in parsed if str(item).strip()]
+        except (json.JSONDecodeError, TypeError):
+            pass
+        return [part.strip() for part in _re.split(r"[,，;；]", raw_value) if part.strip()]
+    return []
+
+
+def _parse_json_from_llm_text(content: str):
+    """Extract JSON payload from raw LLM text."""
+    if not content:
+        return None
+    text = content.strip()
+    if text.startswith("```"):
+        match = _re.search(r"```(?:json)?\s*([\s\S]*?)```", text)
+        if match:
+            text = match.group(1).strip()
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        match = _re.search(r"(\{[\s\S]*\}|\[[\s\S]*\])", text)
+        if match:
+            try:
+                return json.loads(match.group(1))
+            except json.JSONDecodeError:
+                return None
+    return None
+
+
+def _chunk_items(items: list, chunk_size: int) -> List[list]:
+    return [items[i:i + chunk_size] for i in range(0, len(items), chunk_size)]
+
+
+async def _generate_answers_for_blocks_batch(items: List[dict]) -> dict:
+    """Generate answers/solutions for multiple questions in a single LLM call."""
+    if not items:
+        return {}
+
+    payload_items = []
+    for item in items:
+        payload_items.append({
+            "block_id": item["block_id"],
+            "question_text": item["question_text"],
+            "question_type": item.get("question_type", ""),
+            "knowledge_point": item.get("knowledge_point", ""),
+        })
+
+    prompt = (
+        "请为下面这些小学数学题批量生成答案和解析。\n"
+        "要求：\n"
+        "1. 严格按输入中的每个 block_id 返回结果，不能遗漏，不能新增。\n"
+        "2. answer 要简洁准确，包含单位；多小问请分点或分号区分。\n"
+        "3. solution 用中文分步说明，适合家长和小学生复核。\n"
+        "4. 如果题目依赖配图或条件不足无法确定，请如实写“需要结合原图判断”。\n"
+        "5. 只输出 JSON，不要 markdown。\n\n"
+        "输入：\n"
+        f"{json.dumps(payload_items, ensure_ascii=False)}\n\n"
+        "输出格式：\n"
+        "{\n"
+        '  "results": [\n'
+        '    {"block_id": 1, "answer": "", "solution": ""}\n'
+        "  ]\n"
+        "}"
+    )
+
+    content = await call_text_llm(
+        messages=[{"role": "user", "content": prompt}],
+        system_prompt="你是一位资深小学数学老师。请输出严格 JSON，不要 markdown 包裹，不要解释性文字。",
+        max_tokens=8192,
+        timeout=120.0,
+    )
+    parsed = _parse_json_from_llm_text(content)
+    if not isinstance(parsed, dict) or not isinstance(parsed.get("results"), list):
+        raise ValueError("批量答案生成返回格式无效")
+
+    result_map = {}
+    for row in parsed.get("results", []):
+        if not isinstance(row, dict):
+            continue
+        block_id = row.get("block_id")
+        if block_id in (None, ""):
+            continue
+        try:
+            block_id = int(block_id)
+        except (TypeError, ValueError):
+            continue
+        result_map[block_id] = {
+            "answer": (row.get("answer") or "").strip(),
+            "solution": (row.get("solution") or "").strip(),
+        }
+    return result_map
+
+
+async def _generate_answers_for_blocks_batch_brief(items: List[dict]) -> dict:
+    """Generate answers and short solutions for multiple questions in one LLM call."""
+    if not items:
+        return {}
+
+    payload_items = []
+    for item in items:
+        payload_items.append({
+            "block_id": item["block_id"],
+            "question_text": item["question_text"],
+            "question_type": item.get("question_type", ""),
+            "knowledge_point": item.get("knowledge_point", ""),
+        })
+
+    prompt = (
+        "请为下面这些小学数学题批量生成答案和简短解析。\n"
+        "要求：\n"
+        "1. 严格按输入中的每个 block_id 返回结果，不能遗漏，不能新增。\n"
+        "2. answer 必须直接给最终答案，尽量简洁准确，包含单位；多小问请用分号分隔。\n"
+        "3. solution 只写 1 到 3 句简短解析，突出关键思路，不要展开成长篇分步讲解。\n"
+        "4. 如果题目依赖配图或条件不足无法确定，请在 answer 和 solution 中如实说明“需要结合原图判断”。\n"
+        "5. 只输出 JSON，不要 markdown，不要额外解释。\n\n"
+        "输入：\n"
+        f"{json.dumps(payload_items, ensure_ascii=False)}\n\n"
+        "输出格式：\n"
+        "{\n"
+        '  "results": [\n'
+        '    {"block_id": 1, "answer": "", "solution": ""}\n'
+        "  ]\n"
+        "}"
+    )
+
+    content = await call_text_llm(
+        messages=[{"role": "user", "content": prompt}],
+        system_prompt="你是一位资深小学数学老师。输出严格 JSON。优先给出准确答案，并保持解析简短清晰。",
+        max_tokens=4096,
+        timeout=90.0,
+    )
+    parsed = _parse_json_from_llm_text(content)
+    if not isinstance(parsed, dict) or not isinstance(parsed.get("results"), list):
+        raise ValueError("批量答案生成返回格式无效")
+
+    result_map = {}
+    for row in parsed.get("results", []):
+        if not isinstance(row, dict):
+            continue
+        block_id = row.get("block_id")
+        if block_id in (None, ""):
+            continue
+        try:
+            block_id = int(block_id)
+        except (TypeError, ValueError):
+            continue
+        result_map[block_id] = {
+            "answer": (row.get("answer") or "").strip(),
+            "solution": (row.get("solution") or "").strip(),
+        }
+    return result_map
+
+
+async def _generate_answer_brief(question_text: str, question_type: str = "", knowledge_point: str = "") -> dict:
+    """Generate one answer with a short explanation."""
+    prompt = (
+        "请为下面这道小学数学题生成最终答案和简短解析。\n"
+        f"题目：{question_text}\n"
+        f"题型：{question_type or '未知'}\n"
+        f"知识点：{knowledge_point or '未知'}\n\n"
+        "要求：\n"
+        "1. answer 直接给最终答案，尽量简洁准确，包含单位。\n"
+        "2. solution 只写 1 到 3 句简短解析，不要长篇分步展开。\n"
+        "3. 如果依赖配图或条件不足无法确定，请如实说明“需要结合原图判断”。\n"
+        "4. 只输出 JSON，不要 markdown。\n\n"
+        "输出格式：\n"
+        '{ "answer": "", "solution": "" }'
+    )
+
+    content = await call_text_llm(
+        messages=[{"role": "user", "content": prompt}],
+        system_prompt="你是一位资深小学数学老师。输出严格 JSON。优先给出准确答案，并保持解析简短清晰。",
+        max_tokens=1024,
+        timeout=60.0,
+    )
+    parsed = _parse_json_from_llm_text(content)
+    if not isinstance(parsed, dict):
+        return {"answer": "", "solution": ""}
+    return {
+        "answer": (parsed.get("answer") or "").strip(),
+        "solution": (parsed.get("solution") or "").strip(),
+    }
+
+
+async def _generate_answers_for_blocks_batch_detailed(items: List[dict]) -> dict:
+    """Generate answers and moderately detailed solutions for multiple questions."""
+    if not items:
+        return {}
+
+    payload_items = []
+    for item in items:
+        payload_items.append({
+            "block_id": item["block_id"],
+            "question_text": item["question_text"],
+            "question_type": item.get("question_type", ""),
+            "knowledge_point": item.get("knowledge_point", ""),
+        })
+
+    prompt = (
+        "请为下面这些小学数学题批量生成答案和较详细解析。\n"
+        "要求：\n"
+        "1. 严格按输入中的每个 block_id 返回结果，不能遗漏，不能新增。\n"
+        "2. answer 直接给最终答案，尽量准确，包含单位；多小问请按顺序分号分隔。\n"
+        "3. solution 要比简短解析更详细，建议写 3 到 6 句，说明关键步骤和思路，但不要写成特别冗长的大段文字。\n"
+        "4. 如果题目依赖配图或条件不足无法确定，请在 answer 和 solution 中如实说明“需要结合原图判断”。\n"
+        "5. 只输出 JSON，不要 markdown，不要额外解释。\n\n"
+        "输入：\n"
+        f"{json.dumps(payload_items, ensure_ascii=False)}\n\n"
+        "输出格式：\n"
+        "{\n"
+        '  "results": [\n'
+        '    {"block_id": 1, "answer": "", "solution": ""}\n'
+        "  ]\n"
+        "}"
+    )
+
+    content = await call_text_llm(
+        messages=[{"role": "user", "content": prompt}],
+        system_prompt="你是一位资深小学数学老师。输出严格 JSON。答案要准确，解析要清楚、完整但不过度冗长。",
+        max_tokens=8192,
+        timeout=120.0,
+    )
+    parsed = _parse_json_from_llm_text(content)
+    if not isinstance(parsed, dict) or not isinstance(parsed.get("results"), list):
+        raise ValueError("批量详细答案生成返回格式无效")
+
+    result_map = {}
+    for row in parsed.get("results", []):
+        if not isinstance(row, dict):
+            continue
+        block_id = row.get("block_id")
+        if block_id in (None, ""):
+            continue
+        try:
+            block_id = int(block_id)
+        except (TypeError, ValueError):
+            continue
+        result_map[block_id] = {
+            "answer": (row.get("answer") or "").strip(),
+            "solution": (row.get("solution") or "").strip(),
+        }
+    return result_map
+
+
+async def _populate_question_answers_before_confirm(questions: list, task_id: int) -> dict:
+    """Fill answer/solution on recognition results before task enters need_confirm."""
+    pending = []
+    for index, q in enumerate(questions, 1):
+        if not (q.get("question_text") or "").strip():
+            continue
+        if (q.get("answer") or "").strip() and (q.get("solution") or "").strip():
+            continue
+        pending.append({
+            "block_id": index,
+            "question_ref": q,
+            "question_text": q.get("question_text", ""),
+            "question_type": q.get("question_type", ""),
+            "knowledge_point": q.get("knowledge_point", ""),
+        })
+
+    if not pending:
+        return {"generated": 0, "failed": 0, "total": 0}
+
+    generated = 0
+    failed = 0
+    for batch in _chunk_items(pending, 4):
+        batch_result_map = {}
+        try:
+            batch_result_map = await _generate_answers_for_blocks_batch_detailed(batch)
+        except Exception as e:
+            logger.warning("Task %s detailed batch answer generation failed, fallback to single question mode: %s", task_id, e)
+
+        for item in batch:
+            result = batch_result_map.get(item["block_id"])
+            if result is None:
+                try:
+                    result = await generate_answer(
+                        item["question_text"],
+                        item["question_type"],
+                        item["knowledge_point"],
+                    )
+                except Exception as e:
+                    failed += 1
+                    logger.warning("Task %s answer generation failed for question %s: %s", task_id, item["block_id"], e)
+                    continue
+
+            answer = (result or {}).get("answer", "").strip()
+            solution = (result or {}).get("solution", "").strip()
+            if answer:
+                item["question_ref"]["answer"] = answer
+            if solution:
+                item["question_ref"]["solution"] = solution
+            if answer or solution:
+                generated += 1
+            else:
+                failed += 1
+
+    return {"generated": generated, "failed": failed, "total": len(pending)}
+
+
+async def _generate_missing_block_answers(task_id: int, db: Session) -> dict:
+    """Fill missing block answers for a recognition task before confirmation."""
+    blocks = (
+        db.query(WrongQuestionRecognitionBlock)
+        .filter(WrongQuestionRecognitionBlock.task_id == task_id)
+        .order_by(WrongQuestionRecognitionBlock.page_no, WrongQuestionRecognitionBlock.question_no)
+        .all()
+    )
+
+    pending = []
+    for block in blocks:
+        if not (block.ai_question_text or "").strip():
+            continue
+        if (block.ai_answer or "").strip() and (block.ai_solution or "").strip():
+            continue
+        pending.append({
+            "block_id": block.id,
+            "question_text": block.ai_question_text or "",
+            "question_type": block.ai_question_type or "",
+            "knowledge_point": (_parse_knowledge_points(block.ai_knowledge_points) or [""])[0],
+        })
+
+    if not pending:
+        return {"generated": 0, "failed": 0, "total": 0}
+
+    block_map = {block.id: block for block in blocks}
+    generated = 0
+    failed = 0
+
+    batches = _chunk_items(pending, 6)
+    for batch in batches:
+        batch_result_map = {}
+        batch_failed_ids = set()
+        try:
+            batch_result_map = await _generate_answers_for_blocks_batch_brief(batch)
+        except Exception as e:
+            logger.warning("Batch answer generation failed, falling back to per-question mode: %s", e)
+            batch_failed_ids = {item["block_id"] for item in batch}
+
+        for item in batch:
+            block_id = item["block_id"]
+            result = batch_result_map.get(block_id)
+            if result is None:
+                try:
+                    result = await _generate_answer_brief(
+                        item["question_text"],
+                        item["question_type"],
+                        item["knowledge_point"],
+                    )
+                except Exception as e:
+                    failed += 1
+                    logger.warning("Prepare-confirmation answer generation failed for block %s: %s", block_id, e)
+                    continue
+            elif block_id in batch_failed_ids:
+                failed += 1
+                continue
+
+            block = block_map.get(block_id)
+            if not block:
+                continue
+            answer = (result or {}).get("answer", "").strip()
+            solution = (result or {}).get("solution", "").strip()
+            if answer and not (block.ai_answer or "").strip():
+                block.ai_answer = answer
+            if solution and not (block.ai_solution or "").strip():
+                block.ai_solution = solution
+            if answer or solution:
+                generated += 1
+
+    if generated:
+        db.commit()
+    else:
+        db.rollback()
+
+    return {"generated": generated, "failed": failed, "total": len(pending)}
+
+
+def _extract_questions_from_recognition_result(result) -> list:
+    """Normalize recognize_questions output to a list of question dicts."""
+    if isinstance(result, dict):
+        questions = result.get("questions", [])
+    elif isinstance(result, list):
+        questions = result
+    else:
+        questions = []
+    return [q for q in questions if isinstance(q, dict) and q.get("question_text", "").strip()]
+
+
+def _get_pdf_page_count(pdf_bytes: bytes, max_pages: int = 30) -> int:
+    """Return PDF page count capped to the system processing limit."""
+    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    try:
+        total = len(doc)
+    finally:
+        doc.close()
+    if total <= 0:
+        raise ValueError("PDF 文件为空")
+    return min(total, max_pages) if max_pages > 0 else total
+
+
+def _question_quality_score(q: dict) -> float:
+    """Heuristic quality score used to decide whether a page needs vision fallback."""
+    score = 0.0
+    text = (q.get("question_text") or "").strip()
+    answer = (q.get("answer") or "").strip()
+    solution = (q.get("solution") or "").strip()
+    extraction_only = q.get("_source") in {"markdown", "markdown_ocr", "vision"}
+    confidence = q.get("confidence", 0.0)
+    if isinstance(confidence, (int, float)):
+        score += min(max(float(confidence), 0.0), 1.0) * 0.30
+
+    if len(text) >= 40:
+        score += 0.35
+    elif len(text) >= 20:
+        score += 0.28
+    elif len(text) >= 8:
+        score += 0.12
+    if not extraction_only and answer:
+        score += 0.10
+    if not extraction_only and len(solution) >= 10:
+        score += 0.10
+    if q.get("knowledge_point"):
+        score += 0.10
+    if q.get("question_type"):
+        score += 0.05
+    if q.get("is_complete", True):
+        score += 0.10
+
+    uncertain_text = f"{text} {answer} {solution}"
+    if any(token in uncertain_text for token in ["无法确定", "看不清", "不完整", "unclear", "未知"]):
+        score -= 0.20
+    return max(0.0, min(1.0, score))
+
+
+def _normalize_pdf_question(q: dict, page_no: int = 1, index: int = 1, source: str = "") -> dict:
+    """Normalize Markdown/Vision PDF question output to the block storage shape."""
+    normalized = dict(q)
+    try:
+        normalized["page_no"] = int(normalized.get("page_no") or page_no or 1)
+    except (TypeError, ValueError):
+        normalized["page_no"] = page_no or 1
+    normalized["question_no"] = str(normalized.get("question_no") or index)
+    normalized["question_text"] = (normalized.get("question_text") or "").strip()
+    normalized["answer"] = (normalized.get("answer") or "").strip()
+    normalized["solution"] = (normalized.get("solution") or "").strip()
+    normalized["question_type"] = normalized.get("question_type") or "other"
+    normalized["difficulty"] = normalized.get("difficulty") or "中等"
+    normalized["knowledge_point"] = normalized.get("knowledge_point") or "未知"
+    normalized["knowledge_category"] = normalized.get("knowledge_category") or "其他"
+    confidence = normalized.get("confidence", 0.8)
+    if isinstance(confidence, (int, float)):
+        confidence = float(confidence)
+        normalized["confidence"] = confidence / 100 if confidence > 1 else confidence
+    else:
+        normalized["confidence"] = 0.8
+    normalized["_source"] = source
+    normalized["_quality_score"] = _question_quality_score(normalized)
+    return normalized
+
+
+def _page_quality(questions: list) -> float:
+    if not questions:
+        return 0.0
+    return sum(q.get("_quality_score", _question_quality_score(q)) for q in questions) / len(questions)
+
+
+def _split_markdown_by_page(markdown_text: str, total_pages: int) -> dict:
+    """Split generated markdown into page-numbered chunks."""
+    marker_re = _re.compile(r"---\s*\n\*\*第\s*(\d+)\s*页\*\*\s*\n---", _re.MULTILINE)
+    matches = list(marker_re.finditer(markdown_text or ""))
+    if not matches:
+        return {1: markdown_text or ""}
+
+    pages = {}
+    for i, match in enumerate(matches):
+        page_no = int(match.group(1))
+        start = match.end()
+        end = matches[i + 1].start() if i + 1 < len(matches) else len(markdown_text)
+        if 1 <= page_no <= total_pages:
+            pages[page_no] = markdown_text[start:end]
+    return pages
+
+
+def _estimate_question_count_from_text(text: str) -> int:
+    """Estimate question count from extracted page text to catch missed questions."""
+    if not text:
+        return 0
+    patterns = [
+        r"(?m)^\s*(?:\*\*)?\d{1,2}\s*[\.、．](?:\*\*)?\s*",
+        r"(?m)^\s*(?:\*\*)?[一二三四五六七八九十]{1,3}\s*[、.．](?:\*\*)?\s*",
+    ]
+    starts = []
+    for pattern in patterns:
+        starts.extend(match.start() for match in _re.finditer(pattern, text))
+    return len(set(starts))
+
+
+def _questions_are_similar(a: dict, b: dict) -> bool:
+    """Return True when two extracted blocks likely describe the same question."""
+    no_a = str(a.get("question_no") or "").strip()
+    no_b = str(b.get("question_no") or "").strip()
+    if no_a and no_b and no_a == no_b:
+        return True
+    text_a = _normalize_text(a.get("question_text", ""))[:160]
+    text_b = _normalize_text(b.get("question_text", ""))[:160]
+    if len(text_a) < 12 or len(text_b) < 12:
+        return False
+    return difflib.SequenceMatcher(None, text_a, text_b).ratio() >= 0.72
+
+
+def _better_pdf_question(a: dict, b: dict) -> dict:
+    """Choose the stronger extraction, preserving answer/solution when useful."""
+    score_a = a.get("_quality_score", _question_quality_score(a))
+    score_b = b.get("_quality_score", _question_quality_score(b))
+    best, other = (a, b) if score_a >= score_b else (b, a)
+    merged = dict(best)
+    for field in ["answer", "solution", "knowledge_point", "knowledge_category", "question_type", "difficulty"]:
+        if not merged.get(field) and other.get(field):
+            merged[field] = other[field]
+    if other.get("image_urls") and not merged.get("image_urls"):
+        merged["image_urls"] = other["image_urls"]
+    merged["_quality_score"] = _question_quality_score(merged)
+    return merged
+
+
+def _merge_pdf_questions(markdown_questions: list, vision_by_page: dict) -> list:
+    """Merge Markdown and vision results instead of replacing one with the other."""
+    merged_by_page = {}
+    for q in markdown_questions:
+        merged_by_page.setdefault(int(q.get("page_no") or 1), []).append(q)
+
+    for page_no, vision_questions in vision_by_page.items():
+        page_questions = merged_by_page.setdefault(page_no, [])
+        for vq in vision_questions:
+            match_idx = next(
+                (idx for idx, existing in enumerate(page_questions) if _questions_are_similar(existing, vq)),
+                None,
+            )
+            if match_idx is None:
+                page_questions.append(vq)
+            else:
+                page_questions[match_idx] = _better_pdf_question(page_questions[match_idx], vq)
+
+    final_questions = []
+    for page_no in sorted(merged_by_page):
+        final_questions.extend(merged_by_page[page_no])
+    final_questions.sort(key=lambda q: (int(q.get("page_no") or 1), str(q.get("question_no") or "")))
+    return final_questions
+
+
+def _pdf_pages_to_images(pdf_bytes: bytes, page_numbers: list, dpi: int = 200) -> dict:
+    """Render only selected PDF pages to JPEG bytes for faster vision fallback."""
+    page_set = sorted({int(p) for p in page_numbers if int(p) > 0})
+    if not page_set:
+        return {}
+
+    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    try:
+        images = {}
+        for page_no in page_set:
+            if page_no > len(doc):
+                continue
+            page = doc[page_no - 1]
+            mat = fitz.Matrix(dpi / 72, dpi / 72)
+            pix = page.get_pixmap(matrix=mat, alpha=False)
+            img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+            buf = BytesIO()
+            img.save(buf, format="JPEG", quality=90, optimize=False)
+            images[page_no] = buf.getvalue()
+            logger.info(
+                f"Rendered PDF page {page_no}/{len(doc)} for vision fallback: "
+                f"{pix.width}x{pix.height}, {len(images[page_no]) / 1024:.0f}KB"
+            )
+        return images
+    finally:
+        doc.close()
+
+
+def _unique_question_no(page_no: int, question_no: str, seen: set) -> str:
+    base = str(question_no or len(seen) + 1).strip()
+    key = (page_no, base)
+    if key not in seen:
+        seen.add(key)
+        return base
+    suffix = 2
+    while (page_no, f"{base}-{suffix}") in seen:
+        suffix += 1
+    unique = f"{base}-{suffix}"
+    seen.add((page_no, unique))
+    return unique
+
+
+def _save_recognition_blocks(
+    task_id: int,
+    questions: list,
+    db: Session,
+    match_question_bank: bool = True,
+) -> int:
+    """Persist normalized recognition questions as confirmation blocks."""
+    seen_question_numbers = set()
+    saved_count = 0
+
+    for i, q in enumerate(questions, 1):
+        text = (q.get("question_text") or "").strip()
+        if not text:
+            continue
+
+        page_no = int(q.get("page_no") or 1)
+        question_no = _unique_question_no(page_no, q.get("question_no") or str(i), seen_question_numbers)
+        matched_question_id = None
+        match_confidence = 0
+
+        if match_question_bank:
+            best_q, best_sim = _find_best_match(text, db)
+            if best_q and best_sim > 0.78:
+                matched_question_id = best_q.question_id
+                match_confidence = int(best_sim * 100)
+
+        block = WrongQuestionRecognitionBlock(
+            task_id=task_id,
+            page_no=page_no,
+            question_no=question_no,
+            bbox=json.dumps([]),
+            crop_image_url="",
+            clean_crop_image_url="",
+            question_image_urls=json.dumps(q.get("image_urls", []), ensure_ascii=False) if q.get("image_urls") else None,
+            ai_question_text=text,
+            ai_answer=q.get("answer", ""),
+            ai_solution=q.get("solution", ""),
+            ai_question_type=q.get("question_type", "other"),
+            ai_knowledge_points=json.dumps([q.get("knowledge_point", "未知")], ensure_ascii=False),
+            ai_difficulty=q.get("difficulty", "中等"),
+            ai_keywords=json.dumps([q.get("_source", "")], ensure_ascii=False),
+            ai_confidence=int(q.get("confidence", 0.8) * 100) if isinstance(q.get("confidence"), (int, float)) else 80,
+            matched_question_id=matched_question_id,
+            match_confidence=match_confidence,
+            status="need_confirm",
+        )
+        db.add(block)
+        saved_count += 1
+
+    return saved_count
 
 
 @router.post("/recognize")
@@ -385,8 +1151,12 @@ async def recognize_wrong_question_image(
 
         for page_num, img_bytes in enumerate(page_images):
             try:
-                result = await recognize_questions(img_bytes, f"page_{page_num + 1}.jpg")
-                questions = result.get("questions", [])
+                result = await recognize_questions(
+                    img_bytes,
+                    f"page_{page_num + 1}.jpg",
+                    strategy=RecognitionStrategy.SINGLE_STAGE,
+                )
+                questions = _extract_questions_from_recognition_result(result)
                 warnings = result.get("warnings", [])
                 enhanced = result.get("enhanced", False)
 
@@ -457,9 +1227,13 @@ async def recognize_wrong_question_image(
         # Call AI API
         try:
             logger.info(f"开始调用 AI 识别，图片大小: {len(image_bytes)} bytes")
-            result = await recognize_questions(image_bytes, file.filename or "")
+            result = await recognize_questions(
+                image_bytes,
+                file.filename or "",
+                strategy=RecognitionStrategy.SINGLE_STAGE,
+            )
             logger.info(f"AI 识别完成，结果: {result.keys() if result else 'None'}")
-            questions = result.get("questions", [])
+            questions = _extract_questions_from_recognition_result(result)
             quality_info = result.get("quality_info", {})
             warnings = result.get("warnings", [])
             enhanced = result.get("enhanced", False)
@@ -623,8 +1397,12 @@ async def recognize_advanced(
                     "Page analysis returned no valid bboxes, falling back to full-image recognition"
                 )
                 try:
-                    fallback_questions = await recognize_questions(clean_bytes or preprocessed,
-                                                                    f"page_{page_no}.jpg")
+                    fallback_result = await recognize_questions(
+                        clean_bytes or preprocessed,
+                        f"page_{page_no}.jpg",
+                        strategy=RecognitionStrategy.SINGLE_STAGE,
+                    )
+                    fallback_questions = _extract_questions_from_recognition_result(fallback_result)
                     if fallback_questions:
                         ai_questions = [{
                             "question_no": str(i + 1),
@@ -802,13 +1580,17 @@ async def recognize_advanced(
         }, ensure_ascii=False)
         db.commit()
 
-        return RecognizeAdvancedResponse(
-            task_id=task_id,
-            status="need_confirm",
-            file_type="pdf" if is_pdf else "image",
-            page_count=total_pages,
-            pages=pages_result,
-        )
+        # Convert numpy types before returning
+        response_data = {
+            "task_id": task_id,
+            "status": "need_confirm",
+            "file_type": "pdf" if is_pdf else "image",
+            "page_count": total_pages,
+            "pages": [page.dict() for page in pages_result],
+        }
+        response_data = convert_numpy_types(response_data)
+
+        return RecognizeAdvancedResponse(**response_data)
 
     except Exception as e:
         task.status = "failed"
@@ -875,8 +1657,12 @@ async def _process_page(
     if not ai_questions or not _has_valid_bbox:
         logger.info(f"Page {page_no}: no valid bboxes from structure analysis, falling back to full-image recognition")
         try:
-            fallback_questions = await recognize_questions(clean_bytes or preprocessed,
-                                                            f"page_{page_no}.jpg")
+            fallback_result = await recognize_questions(
+                clean_bytes or preprocessed,
+                f"page_{page_no}.jpg",
+                strategy=RecognitionStrategy.SINGLE_STAGE,
+            )
+            fallback_questions = _extract_questions_from_recognition_result(fallback_result)
             if fallback_questions:
                 ai_questions = [{
                     "question_no": str(i + 1),
@@ -1132,6 +1918,233 @@ async def _run_pdf_recognition_background(
         db.close()
 
 
+async def _run_pdf_hybrid_recognition_background(
+    task_id: int,
+    user_id: int,
+    pdf_path: str,
+    recognition_mode: str,
+    remove_correction_marks: bool,
+    match_question_bank: bool,
+):
+    """Hybrid PDF pipeline: Markdown first, vision only for missing/low-quality pages."""
+    db = SessionLocal()
+    try:
+        with open(pdf_path, "rb") as f:
+            pdf_bytes = f.read()
+
+        task = db.query(WrongQuestionRecognitionTask).filter(
+            WrongQuestionRecognitionTask.id == task_id,
+            WrongQuestionRecognitionTask.user_id == user_id,
+        ).first()
+        if not task:
+            raise ValueError("识别任务不存在")
+
+        total_pages = task.page_count or _get_pdf_page_count(pdf_bytes)
+        mode = (recognition_mode or "auto").lower()
+        progress_store.update(
+            task_id,
+            status="processing",
+            current_page=0,
+            total_pages=total_pages,
+            questions_found=0,
+            message="正在分析 PDF 类型...",
+        )
+
+        markdown_questions = []
+        markdown_error = ""
+        vision_pages = set()
+        vision_failed_pages = []
+        vision_by_page = {}
+
+        should_try_markdown = mode not in ("vision", "image", "visual")
+        if should_try_markdown:
+            try:
+                progress_store.update(task_id, message="正在提取 PDF 文本并转换为 Markdown...")
+                markdown_text, used_ocr = await asyncio.to_thread(
+                    pdf_to_markdown,
+                    pdf_bytes,
+                    30,
+                    False,  # OCR for scanned PDFs is slower and less reliable than vision fallback.
+                )
+                effective_chars = len(_re.sub(r"\s+", "", markdown_text))
+                if effective_chars < 100:
+                    raise ValueError("Markdown 有效文本过少，疑似扫描版 PDF")
+
+                progress_store.update(task_id, message="正在用 Markdown 快速拆题...")
+                from ..utils.deepseek import call_text_llm
+
+                extracted = await extract_questions_from_markdown(
+                    markdown_text,
+                    call_text_llm,
+                    pdf_images=None,
+                    include_answers=False,
+                )
+                markdown_questions = [
+                    _normalize_pdf_question(q, page_no=q.get("page_no", 1), index=i + 1, source="markdown_ocr" if used_ocr else "markdown")
+                    for i, q in enumerate(extracted)
+                    if isinstance(q, dict) and (q.get("question_text") or "").strip()
+                ]
+                progress_store.update(
+                    task_id,
+                    questions_found=len(markdown_questions),
+                    message=f"Markdown 已识别 {len(markdown_questions)} 道题，正在做质量检查...",
+                )
+
+                markdown_pages = _split_markdown_by_page(markdown_text, total_pages)
+                questions_by_page = {}
+                for q in markdown_questions:
+                    questions_by_page.setdefault(int(q.get("page_no") or 1), []).append(q)
+
+                for page_no in range(1, total_pages + 1):
+                    page_questions = questions_by_page.get(page_no, [])
+                    estimated_count = _estimate_question_count_from_text(markdown_pages.get(page_no, ""))
+                    missed_questions = estimated_count > 0 and len(page_questions) < max(1, estimated_count)
+                    low_quality = page_questions and _page_quality(page_questions) < 0.45
+                    if not page_questions or missed_questions or low_quality:
+                        vision_pages.add(page_no)
+
+                if mode in ("accurate", "high_accuracy", "high-accuracy"):
+                    vision_pages = set(range(1, total_pages + 1))
+                elif mode == "fast" and markdown_questions:
+                    vision_pages = set()
+
+            except Exception as e:
+                markdown_error = str(e)
+                logger.warning(f"PDF Markdown recognition failed, using vision fallback: {e}")
+                vision_pages = set(range(1, total_pages + 1))
+        else:
+            vision_pages = set(range(1, total_pages + 1))
+
+        if not markdown_questions and not vision_pages:
+            vision_pages = set(range(1, total_pages + 1))
+
+        if vision_pages:
+            progress_store.update(
+                task_id,
+                message=f"正在渲染 PDF 页面，准备视觉补识别 {len(vision_pages)} 页...",
+            )
+            page_images = await asyncio.to_thread(
+                _pdf_pages_to_images,
+                pdf_bytes,
+                sorted(vision_pages),
+                200,
+            )
+            semaphore = asyncio.Semaphore(2)
+            completed = 0
+
+            async def _recognize_one_page(page_no: int):
+                async with semaphore:
+                    try:
+                        if page_no not in page_images:
+                            raise ValueError("页面渲染失败")
+                        result = await recognize_questions(
+                            page_images[page_no],
+                            f"pdf_page_{page_no}.jpg",
+                            strategy=RecognitionStrategy.SINGLE_STAGE,
+                            include_answers=False,
+                        )
+                        questions = [
+                            _normalize_pdf_question(q, page_no=page_no, index=i + 1, source="vision")
+                            for i, q in enumerate(_extract_questions_from_recognition_result(result))
+                        ]
+                        return page_no, questions, None
+                    except Exception as e:
+                        return page_no, [], str(e)
+
+            tasks = [_recognize_one_page(p) for p in sorted(vision_pages)]
+            for done in asyncio.as_completed(tasks):
+                page_no, questions, error = await done
+                completed += 1
+                if error:
+                    vision_failed_pages.append(page_no)
+                    logger.warning(f"PDF vision fallback page {page_no} failed: {error}")
+                else:
+                    vision_by_page[page_no] = questions
+
+                found = len(markdown_questions) + sum(len(v) for v in vision_by_page.values())
+                progress_store.update(
+                    task_id,
+                    current_page=page_no,
+                    questions_found=found,
+                    message=f"视觉补识别进度 {completed}/{len(tasks)} 页，当前共发现 {found} 道题",
+                )
+
+        # Merge Markdown and vision results. Vision can improve weak pages, but it
+        # must not shrink a page that Markdown already extracted more completely.
+        final_questions = _merge_pdf_questions(markdown_questions, vision_by_page)
+        if not final_questions:
+            raise ValueError(markdown_error or "未能从 PDF 中识别出题目")
+
+        progress_store.update(
+            task_id,
+            current_page=total_pages,
+            total_pages=total_pages,
+            questions_found=len(final_questions),
+            message=f"题目识别完成，正在生成 {len(final_questions)} 道题的答案解析...",
+        )
+        answer_stats = await _populate_question_answers_before_confirm(final_questions, task_id)
+
+        saved_count = _save_recognition_blocks(
+            task_id=task_id,
+            questions=final_questions,
+            db=db,
+            match_question_bank=match_question_bank,
+        )
+        if saved_count == 0:
+            raise ValueError("识别结果为空，无法生成确认题目")
+
+        task.status = "partial_failed" if vision_failed_pages else "need_confirm"
+        task.raw_result = json.dumps({
+            "recognition_mode": mode,
+            "pipeline": "markdown_first_vision_fallback",
+            "markdown_count": len(markdown_questions),
+            "vision_pages": sorted(vision_pages),
+            "vision_failed_pages": vision_failed_pages,
+            "final_count": saved_count,
+            "answer_generated_count": answer_stats.get("generated", 0),
+            "answer_failed_count": answer_stats.get("failed", 0),
+            "markdown_error": markdown_error,
+        }, ensure_ascii=False)
+        db.commit()
+
+        message = f"识别完成，共 {saved_count} 道题"
+        if vision_failed_pages:
+            message += f"，其中 {len(vision_failed_pages)} 页补识别失败，可先确认已识别题目"
+        progress_store.update(
+            task_id,
+            status=task.status,
+            current_page=total_pages,
+            total_pages=total_pages,
+            questions_found=saved_count,
+            message=message,
+        )
+
+    except Exception as e:
+        logger.error(f"Hybrid PDF task {task_id} failed: {e}", exc_info=True)
+        try:
+            task = db.query(WrongQuestionRecognitionTask).filter(
+                WrongQuestionRecognitionTask.id == task_id,
+                WrongQuestionRecognitionTask.user_id == user_id,
+            ).first()
+            if task:
+                task.status = "failed"
+                task.raw_result = json.dumps({"error": str(e)}, ensure_ascii=False)
+                db.commit()
+        except Exception:
+            db.rollback()
+        progress_store.update(
+            task_id,
+            status="failed",
+            message=f"识别失败: {str(e)[:150]}",
+        )
+    finally:
+        try:
+            os.remove(pdf_path)
+        except Exception:
+            pass
+        db.close()
+
+
 @router.post("/recognize-pdf")
 async def recognize_pdf_async(
     background_tasks: BackgroundTasks,
@@ -1172,6 +2185,53 @@ async def recognize_pdf_async(
     os.makedirs(os.path.dirname(temp_pdf_path), exist_ok=True)
     with open(temp_pdf_path, "wb") as f:
         f.write(pdf_bytes)
+
+    try:
+        page_count = _get_pdf_page_count(pdf_bytes, max_pages=30)
+    except Exception as e:
+        try:
+            os.remove(temp_pdf_path)
+        except Exception:
+            pass
+        raise HTTPException(status_code=400, detail=f"PDF 处理失败: {str(e)}")
+
+    effective_mode = "fast" if use_markdown else (recognition_mode or "auto")
+    task = WrongQuestionRecognitionTask(
+        user_id=user_id,
+        file_url="",
+        file_type="pdf",
+        recognition_mode=effective_mode,
+        status="processing",
+        page_count=page_count,
+    )
+    db.add(task)
+    db.flush()
+    task_id = task.id
+    db.commit()
+
+    progress_store.init(task_id, page_count)
+    progress_store.update(
+        task_id,
+        message="PDF 已上传，正在启动 Markdown 优先的混合识别...",
+    )
+
+    background_tasks.add_task(
+        _run_pdf_hybrid_recognition_background,
+        task_id=task_id,
+        user_id=user_id,
+        pdf_path=temp_pdf_path,
+        recognition_mode=effective_mode,
+        remove_correction_marks=remove_correction_marks,
+        match_question_bank=match_question_bank,
+    )
+
+    return {
+        "task_id": task_id,
+        "status": "processing",
+        "file_type": "pdf",
+        "page_count": page_count,
+        "message": f"识别任务已创建，共 {page_count} 页，正在后台处理",
+    }
 
     # Default: Vision-based recognition (recommended)
     if not use_markdown:
@@ -1453,11 +2513,12 @@ def get_recognition_progress(
     return {
         "task_id": task_id,
         "status": task.status or "unknown",
-        "current_page": task.page_count if task.status in ("need_confirm", "confirmed") else 0,
+        "current_page": task.page_count if task.status in ("need_confirm", "partial_failed", "confirmed") else 0,
         "total_pages": task.page_count or 0,
         "questions_found": blocks_count,
         "message": (
             "识别已完成" if task.status == "need_confirm"
+            else "部分页面识别失败，可先确认已识别题目" if task.status == "partial_failed"
             else "识别失败" if task.status == "failed"
             else "已确认" if task.status == "confirmed"
             else "等待处理"
@@ -1507,6 +2568,36 @@ def get_recognition_task(
             kws = json.loads(b.ai_keywords) if b.ai_keywords else []
         except (json.JSONDecodeError, TypeError):
             kws = []
+        try:
+            question_image_urls = json.loads(b.question_image_urls) if b.question_image_urls else []
+        except (json.JSONDecodeError, TypeError):
+            question_image_urls = []
+
+        matched_qs = []
+        if b.ai_question_text:
+            for mq in _search_matches(b.ai_question_text, db, limit=5):
+                sim = difflib.SequenceMatcher(
+                    None,
+                    _normalize_text(b.ai_question_text),
+                    _normalize_text(mq.question_text or ""),
+                ).ratio()
+                matched_qs.append(MatchedQuestionOut(
+                    question_id=mq.question_id,
+                    similarity=round(sim, 2),
+                    question_text=(mq.question_text or "")[:100],
+                    knowledge_point=mq.knowledge_point or "",
+                    difficulty=mq.difficulty or "",
+                ))
+        if b.matched_question_id and not any(mq.question_id == b.matched_question_id for mq in matched_qs):
+            matched = db.query(Question).filter(Question.question_id == b.matched_question_id).first()
+            if matched:
+                matched_qs.insert(0, MatchedQuestionOut(
+                    question_id=matched.question_id,
+                    similarity=round((b.match_confidence or 0) / 100.0, 2),
+                    question_text=(matched.question_text or "")[:100],
+                    knowledge_point=matched.knowledge_point or "",
+                    difficulty=matched.difficulty or "",
+                ))
 
         pages_map[pno].questions.append(RecognitionBlockOut(
             block_id=f"p{b.page_no}_q{b.question_no}",
@@ -1515,6 +2606,7 @@ def get_recognition_task(
             bbox=bbox,
             crop_image_url=b.crop_image_url or "",
             clean_crop_image_url=b.clean_crop_image_url or "",
+            question_image_urls=question_image_urls,
             ai_result=AiResultOut(
                 question_text=b.ai_question_text or "",
                 question_type=b.ai_question_type or "other",
@@ -1523,9 +2615,11 @@ def get_recognition_task(
                 keywords=kws,
                 confidence=(b.ai_confidence or 0) / 100.0,
             ),
-            matched_questions=[],
+            ai_answer=b.ai_answer or "",
+            ai_solution=b.ai_solution or "",
+            matched_questions=matched_qs,
             suggested_action="need_confirm",
-            need_manual_confirm=True,
+            need_manual_confirm=not (b.matched_question_id and (b.match_confidence or 0) >= 90),
         ))
 
     # Try to get page URLs from the first block's task
@@ -1540,10 +2634,34 @@ def get_recognition_task(
     )
 
 
+@router.post("/recognition-tasks/{task_id}/prepare-confirmation")
+async def prepare_recognition_confirmation(
+    task_id: int,
+    user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    """Generate missing answers/solutions so the user can confirm with full context."""
+    task = db.query(WrongQuestionRecognitionTask).filter(
+        WrongQuestionRecognitionTask.id == task_id,
+        WrongQuestionRecognitionTask.user_id == user_id,
+    ).first()
+    if not task:
+        raise HTTPException(status_code=404, detail="任务不存在")
+
+    stats = await _generate_missing_block_answers(task_id, db)
+    return {
+        "task_id": task_id,
+        "generated": stats.get("generated", 0),
+        "failed": stats.get("failed", 0),
+        "total": stats.get("total", 0),
+    }
+
+
 @router.post("/recognition-tasks/{task_id}/confirm")
 def confirm_recognition_task(
     task_id: int,
     req: ConfirmRecognitionRequest,
+    background_tasks: BackgroundTasks,
     user_id: int = Depends(get_current_user_id),
     db: Session = Depends(get_db),
 ):
@@ -1556,6 +2674,7 @@ def confirm_recognition_task(
         raise HTTPException(status_code=404, detail="任务不存在")
 
     results = []
+    pending_answer_backfill_ids = set()
     for item in req.items:
         block_id = item.block_id
         # Parse block_id to find the block
@@ -1582,6 +2701,11 @@ def confirm_recognition_task(
             # No match — skip (user should create question first)
             results.append({"block_id": block_id, "status": "skipped", "reason": "未匹配题库"})
             continue
+
+        block.matched_question_id = matched_q_id
+        q = db.query(Question).filter(Question.question_id == matched_q_id).first()
+        if _needs_answer_backfill(q):
+            pending_answer_backfill_ids.add(matched_q_id)
 
         # Check if already in wrong questions
         existing = (
@@ -1612,9 +2736,9 @@ def confirm_recognition_task(
             ai_confidence=block.ai_confidence,
         )
         db.add(record)
+        db.flush()
 
         # Update knowledge mastery
-        q = db.query(Question).filter(Question.question_id == matched_q_id).first()
         if q:
             _update_mastery(user_id, q.knowledge_point, False, db)
 
@@ -1631,6 +2755,13 @@ def confirm_recognition_task(
         task.status = "confirmed"
 
     db.commit()
+    queued_backfill_count = len(pending_answer_backfill_ids)
+    if queued_backfill_count and background_tasks is not None:
+        background_tasks.add_task(
+            _backfill_question_answers_background,
+            task_id=task_id,
+            question_ids=list(pending_answer_backfill_ids),
+        )
 
     return {"message": f"已处理 {len(results)} 道题", "results": results}
 

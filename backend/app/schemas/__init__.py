@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field
-from typing import Optional, List
+from typing import Optional, List, Dict
 from datetime import date, datetime
 
 
@@ -137,6 +137,100 @@ class GenerateSheetRequest(BaseModel):
     sheet_name: Optional[str] = None
     question_ids: Optional[List[int]] = None
     knowledge_group_counts: Optional[List[KnowledgeGroupCount]] = None
+
+
+class AIPracticePreviewRequest(BaseModel):
+    prompt: str = Field(..., min_length=2, max_length=2000)
+
+
+class AIParsedRequirement(BaseModel):
+    sheet_name: str = ""
+    sheet_type: str = "special_topic"
+    sheet_count: int = 1
+    target_count: int = 8
+    target_minutes: Optional[int] = None
+    knowledge_categories: List[str] = Field(default_factory=list)
+    knowledge_points: List[str] = Field(default_factory=list)
+    question_types: List[str] = Field(default_factory=list)
+    question_type_counts: Dict[str, int] = Field(default_factory=dict)
+    exclude_question_types: List[str] = Field(default_factory=list)
+    difficulties: List[str] = Field(default_factory=list)
+    difficulty_progression: bool = True
+    must_include_wrong_questions: bool = False
+    strategy_hint: str = ""
+    reasoning_summary: str = ""
+    learning_advice: str = ""
+
+
+class AIPracticeSuggestion(BaseModel):
+    summary: str = ""
+    selection_reason: str = ""
+    ordering_reason: str = ""
+    coverage_summary: str = ""
+
+
+class AISelectedQuestion(BaseModel):
+    question_id: int
+    q_id: str
+    knowledge_point: str
+    knowledge_category: Optional[str] = None
+    question_type: Optional[str] = None
+    difficulty: Optional[str] = None
+    question_text: str
+    has_image: bool = False
+    image_path: Optional[str] = None
+    selected_reason: str = ""
+
+
+class AIPracticeVariant(BaseModel):
+    variant_id: str
+    sheet_name: str = ""
+    selected_questions: List[AISelectedQuestion] = Field(default_factory=list)
+    estimated_time: int = 0
+
+
+class AIPracticePreviewResponse(BaseModel):
+    parsed_requirement: AIParsedRequirement
+    suggestion: AIPracticeSuggestion
+    variants: List[AIPracticeVariant] = Field(default_factory=list)
+    selected_questions: List[AISelectedQuestion] = Field(default_factory=list)
+    candidate_count: int = 0
+    estimated_time: int = 0
+    total_variants: int = 1
+
+
+class AIPracticeConfirmVariant(BaseModel):
+    variant_id: Optional[str] = None
+    sheet_name: Optional[str] = None
+    question_ids: List[int] = Field(default_factory=list, min_length=1)
+
+
+class AIPracticeConfirmRequest(BaseModel):
+    sheet_name: Optional[str] = None
+    sheet_type: str = "special_topic"
+    question_ids: List[int] = Field(default_factory=list)
+    variants: List[AIPracticeConfirmVariant] = Field(default_factory=list)
+
+
+class AIPracticeConfirmResponse(BaseModel):
+    created_count: int = 0
+    sheets: List["PracticeSheetOut"] = Field(default_factory=list)
+
+
+class AIPracticeReplaceRequest(BaseModel):
+    parsed_requirement: AIParsedRequirement
+    current_question_ids: List[int] = Field(default_factory=list)
+    replace_question_id: int
+
+
+class AIPracticeSupplementRequest(BaseModel):
+    parsed_requirement: AIParsedRequirement
+    current_question_ids: List[int] = Field(default_factory=list)
+
+
+class AIPracticeAdjustResponse(BaseModel):
+    question: AISelectedQuestion
+    estimated_time: int = 0
 
 
 class SubmitAnswer(BaseModel):
@@ -382,7 +476,10 @@ class RecognitionBlockOut(BaseModel):
     bbox: List[float] = []
     crop_image_url: str = ""
     clean_crop_image_url: str = ""
+    question_image_urls: List[str] = []
     ai_result: Optional[AiResultOut] = None
+    ai_answer: str = ""
+    ai_solution: str = ""
     matched_questions: List[MatchedQuestionOut] = []
     suggested_action: str = "need_confirm"
     need_manual_confirm: bool = True

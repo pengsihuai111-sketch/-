@@ -14,6 +14,22 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI(title="小升初数学题库管理系统 v4.0", version="4.0.0")
 
+# 请求日志中间件
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    print(f"========== 收到请求 ==========")
+    print(f"路径: {request.url.path}")
+    print(f"方法: {request.method}")
+    print(f"Headers: {dict(request.headers)}")
+    try:
+        response = await call_next(request)
+        print(f"响应状态码: {response.status_code}")
+        return response
+    except Exception as e:
+        print(f"中间件捕获异常: {e}")
+        print(f"堆栈: {traceback.format_exc()}")
+        raise
+
 # 全局异常处理器
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
@@ -28,10 +44,10 @@ async def global_exception_handler(request: Request, exc: Exception):
         content={"detail": f"服务器内部错误: {str(exc)}"}
     )
 
-# CORS
+# CORS - 允许外网访问
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_origins=["*"],  # 允许所有来源访问（开发/测试环境）
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

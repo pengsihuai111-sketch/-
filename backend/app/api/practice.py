@@ -1,4 +1,5 @@
 import json
+import re
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
 from sqlalchemy.orm import Session
 from sqlalchemy import func
@@ -6,17 +7,601 @@ from datetime import date, datetime, timedelta
 import random
 import os
 import uuid
+from typing import Any, Dict, List, Optional
 
 from ..database import get_db
 from ..models import (
     Question, PracticeSheet, SheetQuestion, UserPracticeHistory,
-    UserWrongQuestion, UserKnowledgeMastery, PracticeType, SheetType,
+    UserWrongQuestion, UserKnowledgeMastery, PracticeType, SheetType, User,
 )
-from ..schemas import GenerateSheetRequest, PracticeSheetOut, QuestionOut, SubmitSheetRequest, SubmitResultOut, QuestionResultOut, GenerateWeekResponse, DaySheetOut, MarkSheetRequest, MarkItem, GenerateWrongPeriodRequest, SmartRedoRequest
+from ..schemas import GenerateSheetRequest, PracticeSheetOut, QuestionOut, SubmitSheetRequest, SubmitResultOut, QuestionResultOut, GenerateWeekResponse, DaySheetOut, MarkSheetRequest, MarkItem, GenerateWrongPeriodRequest, SmartRedoRequest, AIPracticePreviewRequest, AIParsedRequirement, AIPracticeSuggestion, AISelectedQuestion, AIPracticePreviewResponse, AIPracticeConfirmRequest, AIPracticeConfirmResponse, AIPracticeReplaceRequest, AIPracticeSupplementRequest, AIPracticeAdjustResponse
 from ..utils.auth import get_current_user_id
+from ..utils.deepseek import call_text_llm
+from ..utils.practice_ai import build_ai_preview, confirm_ai_sheets, replace_ai_question, supplement_ai_question
 from ..config import UPLOAD_DIR, IMAGE_DIR
 
 router = APIRouter(prefix="/api/practice", tags=["练习单"])
+
+
+AI_PRACTICE_ALLOWED_TYPES = {"calculation", "fill_blank", "choice", "problem_solving"}
+AI_PRACTICE_ALLOWED_DIFFICULTIES = {"基础", "中等", "挑战"}
+AI_PRACTICE_ALLOWED_SHEET_TYPES = {"daily", "wrong_redo", "special_topic", "exam"}
+
+
+def _extract_json_object(text: str) -> Dict[str, Any]:
+    if not text:
+        raise ValueError("AI response is empty")
+    text = text.strip()
+    try:
+        data = json.loads(text)
+        if isinstance(data, dict):
+            return data
+    except json.JSONDecodeError:
+        pass
+
+    match = re.search(r"\{[\s\S]*\}", text)
+    if not match:
+        raise ValueError("AI response is not valid JSON")
+    data = json.loads(match.group(0))
+    if not isinstance(data, dict):
+        raise ValueError("AI JSON response must be an object")
+    return data
+
+
+def _clean_str(value: Any) -> str:
+    return value.strip() if isinstance(value, str) else ""
+
+
+def _dedupe_list(values: Optional[List[str]]) -> List[str]:
+    result: List[str] = []
+    seen = set()
+    for item in values or []:
+        if not isinstance(item, str):
+            continue
+        text = item.strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        result.append(text)
+    return result
+
+
+def _normalize_question_types(values: Optional[List[str]]) -> List[str]:
+    return [item for item in _dedupe_list(values) if item in AI_PRACTICE_ALLOWED_TYPES]
+
+
+def _normalize_difficulties(values: Optional[List[str]]) -> List[str]:
+    return [item for item in _dedupe_list(values) if item in AI_PRACTICE_ALLOWED_DIFFICULTIES]
+
+
+def _get_knowledge_catalog(db: Session) -> Dict[str, List[str]]:
+    rows = db.query(Question.knowledge_point, Question.knowledge_category).distinct().all()
+    catalog: Dict[str, List[str]] = {}
+    for kp, cat in rows:
+        if not kp:
+            continue
+        category = cat or "其他"
+        catalog.setdefault(category, [])
+        if kp not in catalog[category]:
+            catalog[category].append(kp)
+    for category in catalog:
+        catalog[category].sort()
+    return catalog
+
+
+def _get_user_learning_snapshot(user_id: int, db: Session) -> Dict[str, Any]:
+    weak_rows = (
+        db.query(UserKnowledgeMastery)
+        .filter(UserKnowledgeMastery.user_id == user_id)
+        .order_by(UserKnowledgeMastery.is_weak_point.desc(), UserKnowledgeMastery.mastery_rate.asc())
+        .limit(12)
+        .all()
+    )
+    weak_points = [row.knowledge_point for row in weak_rows if row.knowledge_point]
+
+    wrong_rows = (
+        db.query(UserWrongQuestion.question_id)
+        .filter(UserWrongQuestion.user_id == user_id, UserWrongQuestion.mastered == False)
+        .all()
+    )
+    wrong_ids = {row[0] for row in wrong_rows if row[0]}
+
+    recent_rows = (
+        db.query(UserPracticeHistory.question_id)
+        .filter(
+            UserPracticeHistory.user_id == user_id,
+            UserPracticeHistory.practice_date >= date.today() - timedelta(days=3),
+        )
+        .all()
+    )
+    recent_ids = {row[0] for row in recent_rows if row[0]}
+
+    return {
+        "weak_points": weak_points,
+        "wrong_ids": wrong_ids,
+        "recent_ids": recent_ids,
+    }
+
+
+def _build_requirement_fallback(prompt: str, user_grade: str, catalog: Dict[str, List[str]]) -> Dict[str, Any]:
+    text = prompt or ""
+    all_points = [kp for points in catalog.values() for kp in points]
+    categories = list(catalog.keys())
+
+    target_count = 8
+    target_minutes = 30
+    count_match = re.search(r"(\\d+)\\s*题", text)
+    if count_match:
+        target_count = max(4, min(20, int(count_match.group(1))))
+    minute_match = re.search(r"(\\d+)\\s*分钟", text)
+    if minute_match:
+        target_minutes = max(10, min(90, int(minute_match.group(1))))
+
+    difficulties = []
+    for value in ["基础", "中等", "挑战"]:
+        if value in text:
+            difficulties.append(value)
+    if not difficulties:
+        difficulties = ["基础", "中等"]
+
+    question_types = []
+    if "计算" in text:
+        question_types.append("calculation")
+    if "填空" in text:
+        question_types.append("fill_blank")
+    if "选择" in text:
+        question_types.append("choice")
+    if "应用" in text or "解决问题" in text:
+        question_types.append("problem_solving")
+
+    exclude_question_types = []
+    if "不要选择" in text or "不要选择题" in text:
+        exclude_question_types.append("choice")
+    if "不要应用" in text or "不要应用题" in text:
+        exclude_question_types.append("problem_solving")
+
+    selected_categories = [cat for cat in categories if cat and cat in text]
+    selected_points = [kp for kp in all_points if kp and kp in text]
+
+    must_include_wrong = any(token in text for token in ["错题", "查漏补缺", "弱点", "近期"])
+    sheet_type = "wrong_redo" if must_include_wrong else "special_topic"
+    strategy_hint = "wrong_focused" if must_include_wrong else "topic_balanced"
+
+    return {
+        "sheet_name": f"AI练习单-{date.today().isoformat()}",
+        "sheet_type": sheet_type,
+        "target_count": target_count,
+        "target_minutes": target_minutes,
+        "knowledge_categories": selected_categories,
+        "knowledge_points": selected_points,
+        "question_types": question_types,
+        "exclude_question_types": exclude_question_types,
+        "difficulties": difficulties,
+        "difficulty_progression": True,
+        "must_include_wrong_questions": must_include_wrong,
+        "strategy_hint": strategy_hint,
+        "reasoning_summary": "系统先理解你的主题、难度和题量要求，再从题库里优先筛出最匹配的候选题。",
+        "learning_advice": f"建议以 {user_grade or '当前年级'} 的常规难度为主，先覆盖核心知识点，再搭配少量提升题。",
+    }
+
+
+async def _parse_ai_requirement(prompt: str, user_id: int, db: Session) -> Dict[str, Any]:
+    user = db.query(User).filter(User.user_id == user_id).first()
+    grade_level = user.grade_level if user else ""
+    catalog = _get_knowledge_catalog(db)
+    snapshot = _get_user_learning_snapshot(user_id, db)
+    fallback = _build_requirement_fallback(prompt, grade_level, catalog)
+
+    prompt_text = (
+        "你是小学数学练习单规划助手。请把用户需求解析成结构化配置。\n"
+        "要求：\n"
+        "1. 只能使用提供的知识点和知识大类。\n"
+        "2. sheet_type 只能是 daily、wrong_redo、special_topic、exam 之一。\n"
+        "3. question_types 只能是 calculation、fill_blank、choice、problem_solving。\n"
+        "4. difficulties 只能是 基础、中等、挑战。\n"
+        "5. 如果用户提到错题、弱点、查漏补缺，must_include_wrong_questions 设为 true。\n"
+        "6. 只返回严格 JSON，不要 markdown。\n\n"
+        f"用户年级：{grade_level or '六年级'}\n"
+        f"用户薄弱知识点：{json.dumps(snapshot['weak_points'], ensure_ascii=False)}\n"
+        f"可用知识目录：\n{json.dumps(catalog, ensure_ascii=False)}\n\n"
+        f"用户需求：{prompt}\n\n"
+        "输出格式：\n"
+        "{\n"
+        '  "sheet_name": "",\n'
+        '  "sheet_type": "special_topic",\n'
+        '  "target_count": 8,\n'
+        '  "target_minutes": 30,\n'
+        '  "knowledge_categories": [],\n'
+        '  "knowledge_points": [],\n'
+        '  "question_types": [],\n'
+        '  "exclude_question_types": [],\n'
+        '  "difficulties": [],\n'
+        '  "difficulty_progression": true,\n'
+        '  "must_include_wrong_questions": false,\n'
+        '  "strategy_hint": "",\n'
+        '  "reasoning_summary": "",\n'
+        '  "learning_advice": ""\n'
+        "}"
+    )
+
+    parsed: Dict[str, Any] = {}
+    try:
+        content = await call_text_llm(
+            messages=[{"role": "user", "content": prompt_text}],
+            system_prompt="你是练习单解析助手。只返回严格 JSON，不要额外解释。",
+            max_tokens=2500,
+            timeout=90.0,
+        )
+        parsed = _extract_json_object(content)
+    except Exception:
+        parsed = {}
+
+    merged = fallback.copy()
+    merged.update({k: v for k, v in parsed.items() if v not in (None, "")})
+    merged["sheet_name"] = _clean_str(merged.get("sheet_name")) or fallback["sheet_name"]
+    merged["sheet_type"] = _clean_str(merged.get("sheet_type")) or fallback["sheet_type"]
+    if merged["sheet_type"] not in AI_PRACTICE_ALLOWED_SHEET_TYPES:
+        merged["sheet_type"] = fallback["sheet_type"]
+
+    try:
+        merged["target_count"] = max(4, min(20, int(merged.get("target_count") or fallback["target_count"])))
+    except (TypeError, ValueError):
+        merged["target_count"] = fallback["target_count"]
+
+    try:
+        merged["target_minutes"] = max(10, min(90, int(merged.get("target_minutes") or fallback["target_minutes"])))
+    except (TypeError, ValueError):
+        merged["target_minutes"] = fallback["target_minutes"]
+
+    merged["knowledge_categories"] = [item for item in _dedupe_list(merged.get("knowledge_categories")) if item in catalog]
+    all_points = {kp for points in catalog.values() for kp in points}
+    merged["knowledge_points"] = [item for item in _dedupe_list(merged.get("knowledge_points")) if item in all_points]
+    merged["question_types"] = _normalize_question_types(merged.get("question_types"))
+    merged["exclude_question_types"] = _normalize_question_types(merged.get("exclude_question_types"))
+    merged["difficulties"] = _normalize_difficulties(merged.get("difficulties")) or fallback["difficulties"]
+    merged["difficulty_progression"] = bool(merged.get("difficulty_progression", True))
+    merged["must_include_wrong_questions"] = bool(merged.get("must_include_wrong_questions", fallback["must_include_wrong_questions"]))
+    merged["strategy_hint"] = _clean_str(merged.get("strategy_hint")) or fallback["strategy_hint"]
+    merged["reasoning_summary"] = _clean_str(merged.get("reasoning_summary")) or fallback["reasoning_summary"]
+    merged["learning_advice"] = _clean_str(merged.get("learning_advice")) or fallback["learning_advice"]
+    return merged
+
+
+def _candidate_base_query(
+    db: Session,
+    parsed: Dict[str, Any],
+    grade_level: str,
+    ignore_difficulty: bool = False,
+    ignore_types: bool = False,
+    use_categories_only: bool = False,
+):
+    query = db.query(Question)
+    if grade_level:
+        query = query.filter(Question.grade_level == grade_level)
+
+    knowledge_points = parsed.get("knowledge_points") or []
+    knowledge_categories = parsed.get("knowledge_categories") or []
+    if knowledge_points and not use_categories_only:
+        query = query.filter(Question.knowledge_point.in_(knowledge_points))
+    elif knowledge_categories:
+        query = query.filter(Question.knowledge_category.in_(knowledge_categories))
+
+    if parsed.get("difficulties") and not ignore_difficulty:
+        query = query.filter(Question.difficulty.in_(parsed["difficulties"]))
+    if parsed.get("question_types") and not ignore_types:
+        query = query.filter(Question.question_type.in_(parsed["question_types"]))
+    if parsed.get("exclude_question_types"):
+        query = query.filter(Question.question_type.notin_(parsed["exclude_question_types"]))
+    return query
+
+
+def _build_candidate_questions(parsed: Dict[str, Any], user_id: int, db: Session) -> List[Question]:
+    user = db.query(User).filter(User.user_id == user_id).first()
+    grade_level = user.grade_level if user else ""
+    snapshot = _get_user_learning_snapshot(user_id, db)
+    target_count = int(parsed.get("target_count") or 8)
+    required_pool = max(target_count * 6, 24)
+
+    candidate_sets: List[List[Question]] = []
+    query_modes = [
+        {"ignore_difficulty": False, "ignore_types": False, "use_categories_only": False},
+        {"ignore_difficulty": True, "ignore_types": False, "use_categories_only": False},
+        {"ignore_difficulty": True, "ignore_types": True, "use_categories_only": False},
+        {"ignore_difficulty": True, "ignore_types": True, "use_categories_only": True},
+    ]
+    for mode in query_modes:
+        rows = _candidate_base_query(db, parsed, grade_level, **mode).limit(220).all()
+        candidate_sets.append(rows)
+        if len(rows) >= required_pool:
+            break
+
+    merged: Dict[int, Question] = {}
+    for rows in candidate_sets:
+        for row in rows:
+            merged[row.question_id] = row
+
+    candidates = list(merged.values())
+    if not candidates:
+        raise HTTPException(status_code=400, detail="题库中暂时没有符合该需求的题目")
+
+    requested_points = set(parsed.get("knowledge_points") or [])
+    requested_categories = set(parsed.get("knowledge_categories") or [])
+    requested_types = set(parsed.get("question_types") or [])
+    requested_difficulties = set(parsed.get("difficulties") or [])
+    weak_points = set(snapshot["weak_points"])
+    wrong_ids = set(snapshot["wrong_ids"])
+    recent_ids = set(snapshot["recent_ids"])
+    must_include_wrong = bool(parsed.get("must_include_wrong_questions"))
+
+    def score_question(q: Question) -> float:
+        score = 0.0
+        if requested_points and q.knowledge_point in requested_points:
+            score += 40
+        if requested_categories and q.knowledge_category in requested_categories:
+            score += 20
+        if requested_types and q.question_type in requested_types:
+            score += 16
+        if requested_difficulties and q.difficulty in requested_difficulties:
+            score += 12
+        if q.knowledge_point in weak_points:
+            score += 10
+        if q.question_id in wrong_ids:
+            score += 24 if must_include_wrong else 6
+        if q.question_id in recent_ids:
+            score -= 18
+        if q.is_high_freq:
+            score += 2
+        if q.is_classic:
+            score += 2
+        if q.has_image and q.knowledge_category == "几何":
+            score += 3
+        score -= (q.global_usage_count or 0) * 0.05
+        score += random.random()
+        return score
+
+    candidates.sort(key=score_question, reverse=True)
+    return candidates[: max(required_pool, 60)]
+
+
+def _build_question_reason(question: Question, parsed: Dict[str, Any], snapshot: Dict[str, Any]) -> str:
+    reasons: List[str] = []
+    if question.knowledge_point in set(parsed.get("knowledge_points") or []):
+        reasons.append("直接命中你指定的知识点")
+    elif question.knowledge_category in set(parsed.get("knowledge_categories") or []):
+        reasons.append("属于你关注的专题类别")
+    if question.question_type in set(parsed.get("question_types") or []):
+        reasons.append("题型和你的要求一致")
+    if question.difficulty in set(parsed.get("difficulties") or []):
+        reasons.append(f"难度处在 {question.difficulty} 范围内")
+    if question.question_id in snapshot["wrong_ids"]:
+        reasons.append("和你近期错题有关")
+    if question.knowledge_point in snapshot["weak_points"]:
+        reasons.append("对应你的薄弱知识点")
+    return "，".join(reasons[:3]) or "综合考虑主题、难度和练习价值后入选"
+
+
+async def _select_questions_with_ai(
+    prompt: str,
+    parsed: Dict[str, Any],
+    candidates: List[Question],
+    user_id: int,
+    db: Session,
+) -> Dict[str, Any]:
+    snapshot = _get_user_learning_snapshot(user_id, db)
+    target_count = int(parsed.get("target_count") or 8)
+    candidate_payload = []
+    for question in candidates:
+        candidate_payload.append({
+            "question_id": question.question_id,
+            "knowledge_point": question.knowledge_point,
+            "knowledge_category": question.knowledge_category or "",
+            "question_type": question.question_type or "",
+            "difficulty": question.difficulty or "",
+            "has_image": bool(question.has_image),
+            "question_text_preview": (question.question_text or "").replace("\n", " ")[:160],
+            "is_wrong_related": question.question_id in snapshot["wrong_ids"],
+            "is_weak_point": question.knowledge_point in snapshot["weak_points"],
+        })
+
+    selection_prompt = (
+        "你是小学数学练习单选题助手。你只能从候选题中选题，不能编造新题。\n"
+        f"请从下面候选题里选出 {target_count} 道最符合用户需求的题。\n"
+        "综合考虑专题覆盖、难度梯度、重复度和用户薄弱点。\n"
+        "selected_questions 只能包含候选列表里的 question_id。\n"
+        "每道题给一句 selected reason。\n"
+        "只输出严格 JSON，不要 markdown。\n\n"
+        f"用户需求：{prompt}\n"
+        f"解析后的练习配置：\n{json.dumps(parsed, ensure_ascii=False)}\n"
+        f"用户薄弱知识点：{json.dumps(snapshot['weak_points'], ensure_ascii=False)}\n"
+        f"候选题：\n{json.dumps(candidate_payload, ensure_ascii=False)}\n\n"
+        "输出格式：\n"
+        "{\n"
+        '  "sheet_name": "",\n'
+        '  "selection_reason": "",\n'
+        '  "ordering_reason": "",\n'
+        '  "coverage_summary": "",\n'
+        '  "selected_questions": [\n'
+        '    {"question_id": 1, "reason": ""}\n'
+        "  ]\n"
+        "}"
+    )
+
+    parsed_result: Dict[str, Any] = {}
+    try:
+        content = await call_text_llm(
+            messages=[{"role": "user", "content": selection_prompt}],
+            system_prompt="你是练习单选题助手。只返回严格 JSON，不要额外解释。",
+            max_tokens=5000,
+            timeout=120.0,
+        )
+        parsed_result = _extract_json_object(content)
+    except Exception:
+        parsed_result = {}
+
+    candidate_map = {question.question_id: question for question in candidates}
+    selected_items = parsed_result.get("selected_questions") or []
+    chosen_ids: List[int] = []
+    reason_map: Dict[int, str] = {}
+    for item in selected_items:
+        if not isinstance(item, dict):
+            continue
+        question_id = item.get("question_id")
+        try:
+            question_id = int(question_id)
+        except (TypeError, ValueError):
+            continue
+        if question_id not in candidate_map or question_id in chosen_ids:
+            continue
+        chosen_ids.append(question_id)
+        reason_map[question_id] = _clean_str(item.get("reason"))
+        if len(chosen_ids) >= target_count:
+            break
+
+    if len(chosen_ids) < target_count:
+        for question in candidates:
+            if question.question_id in chosen_ids:
+                continue
+            chosen_ids.append(question.question_id)
+            if len(chosen_ids) >= target_count:
+                break
+
+    selected_questions = [candidate_map[qid] for qid in chosen_ids if qid in candidate_map]
+    if len(selected_questions) < min(target_count, 3):
+        raise HTTPException(status_code=400, detail="AI 选题失败，请换种描述再试一次")
+
+    return {
+        "sheet_name": _clean_str(parsed_result.get("sheet_name")) or parsed.get("sheet_name") or f"AI练习单-{date.today().isoformat()}",
+        "selection_reason": _clean_str(parsed_result.get("selection_reason")) or "AI 已结合你的主题要求、难度控制和长期薄弱点情况挑出了这组题。",
+        "ordering_reason": _clean_str(parsed_result.get("ordering_reason")) or "题目顺序会先从较容易进入，再逐步过渡到更需要思考和整合能力的题。",
+        "coverage_summary": _clean_str(parsed_result.get("coverage_summary")) or "这份练习单尽量兼顾了知识点覆盖、题型搭配和难度节奏。",
+        "selected_questions": [
+            {
+                "question": question,
+                "reason": reason_map.get(question.question_id) or _build_question_reason(question, parsed, snapshot),
+            }
+            for question in selected_questions
+        ],
+    }
+
+
+def _persist_sheet_with_questions(
+    selected: List[Question],
+    user_id: int,
+    db: Session,
+    sheet_name: str,
+    sheet_type: str,
+    group_by_type: bool = False,
+) -> Dict[str, Any]:
+    sections = None
+    final_questions = list(selected)
+    if group_by_type:
+        final_questions, sections = _group_questions_by_type(final_questions)
+
+    time_estimate = _estimate_time(final_questions)
+    safe_sheet_type = sheet_type if sheet_type in AI_PRACTICE_ALLOWED_SHEET_TYPES else "special_topic"
+    sheet = PracticeSheet(
+        user_id=user_id,
+        sheet_name=sheet_name,
+        sheet_type=SheetType(safe_sheet_type),
+        total_questions=len(final_questions),
+        estimated_time=time_estimate,
+    )
+    if sections:
+        sheet.sections_json = json.dumps(sections, ensure_ascii=False)
+    db.add(sheet)
+    db.flush()
+
+    practice_type = safe_sheet_type if safe_sheet_type in {item.value for item in PracticeType} else PracticeType.special_topic.value
+    for index, question in enumerate(final_questions):
+        db.add(SheetQuestion(
+            sheet_id=sheet.sheet_id,
+            question_id=question.question_id,
+            question_order=index + 1,
+        ))
+        db.add(UserPracticeHistory(
+            user_id=user_id,
+            question_id=question.question_id,
+            practice_date=date.today(),
+            practice_type=practice_type,
+            sheet_id=sheet.sheet_id,
+        ))
+
+    db.commit()
+    db.refresh(sheet)
+
+    response = PracticeSheetOut(
+        sheet_id=sheet.sheet_id,
+        sheet_name=sheet.sheet_name,
+        sheet_type=sheet.sheet_type,
+        total_questions=sheet.total_questions,
+        estimated_time=sheet.estimated_time,
+        generated_date=sheet.generated_date,
+        questions=[QuestionOut.model_validate(q) for q in final_questions],
+    )
+    data = response.model_dump()
+    if sections:
+        data["_sections"] = sections
+    return data
+
+
+@router.post("/ai-generate-preview", response_model=AIPracticePreviewResponse)
+async def ai_generate_preview(
+    req: AIPracticePreviewRequest,
+    user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    return await build_ai_preview(req, user_id, db)
+
+
+@router.post("/ai-generate-confirm", response_model=AIPracticeConfirmResponse)
+def ai_generate_confirm(
+    req: AIPracticeConfirmRequest,
+    user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    return confirm_ai_sheets(req, user_id, db)
+
+    if not req.question_ids:
+        raise HTTPException(status_code=400, detail="请至少选择 1 道题目")
+
+    selected = (
+        db.query(Question)
+        .filter(Question.question_id.in_(req.question_ids))
+        .all()
+    )
+    if not selected:
+        raise HTTPException(status_code=400, detail="未找到指定的题目")
+
+    id_order = {qid: index for index, qid in enumerate(req.question_ids)}
+    selected.sort(key=lambda item: id_order.get(item.question_id, 9999))
+    sheet_name = _clean_str(req.sheet_name) or f"AI练习单-{date.today().isoformat()}"
+    sheet_type = req.sheet_type if req.sheet_type in AI_PRACTICE_ALLOWED_SHEET_TYPES else "special_topic"
+    return _persist_sheet_with_questions(
+        selected=selected,
+        user_id=user_id,
+        db=db,
+        sheet_name=sheet_name,
+        sheet_type=sheet_type,
+        group_by_type=False,
+    )
+
+
+@router.post("/ai-replace-question", response_model=AIPracticeAdjustResponse)
+def ai_replace_question_endpoint(
+    req: AIPracticeReplaceRequest,
+    user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    return replace_ai_question(req, user_id, db)
+
+
+@router.post("/ai-supplement-question", response_model=AIPracticeAdjustResponse)
+def ai_supplement_question_endpoint(
+    req: AIPracticeSupplementRequest,
+    user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    return supplement_ai_question(req, user_id, db)
 
 
 @router.post("/generate")
@@ -1381,7 +1966,7 @@ def mark_sheet_complete(
 def _normalize_answer(text: str) -> str:
     """标准化答案用于比较：去空格/标点/大小写"""
     import re
-    text = re.sub(r'[\s,，。、；;：:""''（）()【】\[\]{}]', '', str(text or ''))
+    text = re.sub(r"[\s,，。、；;：:\"'（）()【】\[\]{}]", "", str(text or ""))
     return text.lower().strip()
 
 

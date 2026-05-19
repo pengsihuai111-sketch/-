@@ -33,15 +33,16 @@ DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
 DEEPSEEK_API_URL = os.getenv("DEEPSEEK_API_URL", "https://api.deepseek.com/chat/completions")
 DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
 
-# Doubao (豆包) API — OpenAI 兼容格式
-DOUBAO_API_KEY = os.getenv("DOUBAO_API_KEY", "sk-z59A2JvGXUTJ4xpjHON0f2oszOPCThWPTzI7J8wSXJ7PgnwY")
+# Unified OpenAI-compatible text endpoint. In this workspace the .env maps these
+# fields to Zhipu GLM models, so the code path stays simple while the model stays single-source.
+DOUBAO_API_KEY = os.getenv("DOUBAO_API_KEY", "")
 DOUBAO_API_URL = os.getenv("DOUBAO_API_URL", "https://api.newcoin.tech/v1/chat/completions")
 DOUBAO_MODEL = os.getenv("DOUBAO_MODEL", "doubao-seed-1-6-251015")
 
-# 文本模型选择: doubao 或 deepseek
+# 文本模型选择: 当前默认走统一配置字段；本地 .env 已配置为智谱 GLM。
 TEXT_LLM_PROVIDER = os.getenv("TEXT_LLM_PROVIDER", "doubao")
 
-# Vision/OCR API config — 豆包视觉模型
-VISION_API_KEY = os.getenv("VISION_API_KEY", "sk-z59A2JvGXUTJ4xpjHON0f2oszOPCThWPTzI7J8wSXJ7PgnwY")
+# Vision/OCR API config — 本地 .env 已配置为智谱视觉模型。
+VISION_API_KEY = os.getenv("VISION_API_KEY", "")
 VISION_API_URL = os.getenv("VISION_API_URL", "https://api.newcoin.tech/v1/chat/completions")
 VISION_MODEL = os.getenv("VISION_MODEL", "doubao-seed-1-6-vision-250815")

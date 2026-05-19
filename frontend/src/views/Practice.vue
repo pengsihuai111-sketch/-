@@ -47,7 +47,12 @@
           </el-card>
 
           <el-card shadow="hover">
-            <template #header><span style="font-weight: bold">生成练习单</span></template>
+            <template #header>
+              <div style="display:flex;justify-content:space-between;align-items:center">
+                <span style="font-weight: bold">生成练习单</span>
+                <el-button type="primary" size="small" plain @click="aiDialogVisible = true">AI 智能生成</el-button>
+              </div>
+            </template>
             <el-form label-width="90px">
               <el-form-item label="练习单名称">
                 <el-input v-model="form.sheet_name" placeholder="留空自动生成" />
@@ -360,6 +365,11 @@
         </div>
       </el-card>
     </template>
+
+    <AIPracticeDialog
+      v-model="aiDialogVisible"
+      @created="handleAICreated"
+    />
   </div>
 </template>
 
@@ -372,6 +382,7 @@ import { Loading } from '@element-plus/icons-vue'
 import html2canvas from 'html2canvas'
 import { jsPDF } from 'jspdf'
 import { renderMath } from '../utils/math'
+import AIPracticeDialog from '../components/AIPracticeDialog.vue'
 
 // ===== 列表模式 =====
 const form = reactive({ sheet_name: '', sheet_type: 'daily', difficulties: ['基础', '中等', '挑战'] })
@@ -384,6 +395,7 @@ const lastSheet = ref(null)
 const weekData = ref(null)
 const weekLoading = ref(false)
 const smartLoading = ref(false)
+const aiDialogVisible = ref(false)
 
 // 按时间段生成错题卷配置
 const periodPreset = ref(3)
@@ -565,6 +577,14 @@ async function loadSheets() {
     const res = await listSheets()
     sheets.value = (res.sheets || []).map(s => ({ ...s, score: s.score ? parseFloat(s.score) : null }))
   } catch (e) { /* ignore */ }
+}
+
+async function handleAICreated(sheet) {
+  const createdSheets = Array.isArray(sheet?.sheets) ? sheet.sheets : []
+  lastSheet.value = createdSheets.length ? createdSheets[0] : sheet
+  periodLastResult.value = null
+  aiDialogVisible.value = false
+  await loadSheets()
 }
 
 async function handleGenerate() {

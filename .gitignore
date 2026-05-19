@@ -67,3 +67,11 @@ backend/uploads/
 *.tmp
 *.bak
 *.pyc
+
+# Uploads (root level)
+uploads/
+uploads/**
+
+# Uploads (root level)
+uploads/
+uploads/**

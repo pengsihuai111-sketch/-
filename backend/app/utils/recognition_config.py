@@ -22,34 +22,34 @@ USE_BBOX_CROPPING = False
 def select_strategy(image_width: int, image_height: int, filename: str = "") -> RecognitionStrategy:
     """Automatically select recognition strategy based on image characteristics.
 
-    Two-stage is better for:
-    - Large images (likely full pages with multiple questions)
-    - PDF pages
-    - Images with high resolution
+    OPTIMIZED STRATEGY (2024-05):
+    - Single-stage is now preferred for most cases (faster, better multi-question handling)
+    - Two-stage only for very small images (likely single questions needing high accuracy)
 
-    Single-stage is better for:
-    - Small images (likely single questions or screenshots)
-    - Low resolution images
-    - Quick recognition needs
+    Single-stage advantages:
+    - 1 API call instead of N+1 (much faster for multi-question images)
+    - Better context for multi-question recognition (no question confusion)
+    - Simpler error handling
+
+    Two-stage advantages:
+    - Higher accuracy for single questions
+    - Better for very small/cropped images
     """
-    # Force two-stage for PDF pages
-    if filename and "page_" in filename.lower():
-        return RecognitionStrategy.TWO_STAGE
-
     # Use image dimensions to decide
     max_dim = max(image_width, image_height)
     min_dim = min(image_width, image_height)
 
-    # Large, high-resolution images likely contain multiple questions
-    if max_dim > 2000 or (max_dim > 1500 and min_dim > 1000):
+    # Very small images (likely single question screenshots): use two-stage for accuracy
+    # But if detected 3+ questions, will auto-fallback to single-stage anyway
+    if max_dim < 1000 and min_dim < 800:
         return RecognitionStrategy.TWO_STAGE
 
-    # Small images likely contain single questions
-    if max_dim < 1200:
-        return RecognitionStrategy.SINGLE_STAGE
-
-    # Medium-sized images: use two-stage for better accuracy
-    return RecognitionStrategy.TWO_STAGE
+    # All other cases: use single-stage for speed and better multi-question handling
+    # This includes:
+    # - Medium images (1000-2000px): likely 1-3 questions
+    # - Large images (2000+px): likely full pages with multiple questions
+    # - PDF pages: better to recognize all at once
+    return RecognitionStrategy.SINGLE_STAGE
 
 
 # Quality thresholds

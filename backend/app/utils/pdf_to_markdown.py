@@ -5,6 +5,7 @@ This approach is more accurate and cost-effective than image-based recognition.
 """
 import logging
 import re
+import asyncio
 from typing import List, Dict, Optional, Tuple
 import fitz  # PyMuPDF
 from PIL import Image
@@ -235,6 +236,7 @@ async def extract_questions_from_markdown(
     markdown_text: str,
     llm_caller,
     pdf_images: Optional[Dict[int, List[bytes]]] = None,
+    include_answers: bool = True,
 ) -> List[Dict]:
     """Extract structured questions from markdown text using LLM.
 
@@ -244,18 +246,18 @@ async def extract_questions_from_markdown(
         pdf_images: Deprecated parameter, no longer used (kept for compatibility)
 
     Returns:
-        List of question dicts with question_text, answer, solution, etc.
+        List of question dicts with question_text and optional answer/solution.
     """
     # Split markdown by pages to process in smaller chunks
     pages = markdown_text.split('---\n**第')
 
-    # If only one page or small content, process all at once
-    if len(pages) <= 2 or len(markdown_text) < 3000:
-        return await _extract_questions_single_batch(markdown_text, llm_caller)
+    # If only one page, process all at once. Multi-page documents are processed
+    # page-by-page to reduce missed questions; concurrency keeps latency bounded.
+    if len(pages) <= 2:
+        return await _extract_questions_single_batch(markdown_text, llm_caller, include_answers)
 
-    # Process each page separately for large documents
-    logger.info(f"Large document detected ({len(markdown_text)} chars, {len(pages)} pages), processing in batches")
-    all_questions = []
+    logger.info(f"Multi-page document detected ({len(markdown_text)} chars, {len(pages)-1} pages), processing pages with limited concurrency")
+    page_chunks = []
 
     for i, page_content in enumerate(pages):
         if i == 0 and not page_content.strip():
@@ -268,22 +270,44 @@ async def extract_questions_from_markdown(
         if not page_content.strip():
             continue
 
-        logger.info(f"Processing batch {i}/{len(pages)-1}: {len(page_content)} chars")
-        try:
-            questions = await _extract_questions_single_batch(page_content, llm_caller)
-            all_questions.extend(questions)
-            logger.info(f"Batch {i} extracted {len(questions)} questions")
-        except Exception as e:
-            logger.warning(f"Batch {i} failed: {e}, continuing with next batch")
-            continue
+        page_chunks.append((i, page_content))
 
-    logger.info(f"Total extracted {len(all_questions)} questions from {len(pages)} batches")
+    semaphore = asyncio.Semaphore(2)
+
+    async def _process_page_chunk(i: int, page_content: str) -> List[Dict]:
+        async with semaphore:
+            logger.info(f"Processing markdown page batch {i}/{len(pages)-1}: {len(page_content)} chars")
+            try:
+                questions = await _extract_questions_single_batch(page_content, llm_caller, include_answers)
+                logger.info(f"Markdown page batch {i} extracted {len(questions)} questions")
+                return questions
+            except Exception as e:
+                logger.warning(f"Markdown page batch {i} failed: {e}, continuing with next batch")
+                return []
+
+    results = await asyncio.gather(*[_process_page_chunk(i, content) for i, content in page_chunks])
+
+    all_questions = []
+    for questions in results:
+        all_questions.extend(questions)
+
+    # Fallback to full-document extraction if page-level extraction found nothing.
+    if not all_questions and markdown_text.strip():
+        try:
+            logger.info("Page-level markdown extraction found no questions, trying full-document fallback")
+            questions = await _extract_questions_single_batch(markdown_text, llm_caller, include_answers)
+            all_questions.extend(questions)
+        except Exception as e:
+            logger.warning(f"Full-document markdown fallback failed: {e}")
+
+    logger.info(f"Total extracted {len(all_questions)} questions from {len(page_chunks)} markdown page batches")
     return all_questions
 
 
-async def _extract_questions_single_batch(markdown_text: str, llm_caller) -> List[Dict]:
+async def _extract_questions_single_batch(markdown_text: str, llm_caller, include_answers: bool = True) -> List[Dict]:
     """Extract questions from a single batch of markdown text."""
-    system_prompt = """你是小学数学题目提取助手。从试卷文本中提取所有题目并解答。
+    if include_answers:
+        system_prompt = """你是小学数学题目提取助手。从试卷文本中提取所有题目并解答。
 
 任务：
 1. 识别所有题目（通过题号：1. 2. 3. 或 一、二、三、或 (1) (2) 或 ① ② 等）
@@ -331,8 +355,7 @@ async def _extract_questions_single_batch(markdown_text: str, llm_caller) -> Lis
     }
   ]
 }"""
-
-    user_prompt = f"""以下是从数学试卷PDF中提取的文本内容，请识别并提取所有题目：
+        user_prompt = f"""以下是从数学试卷PDF中提取的文本内容，请识别并提取所有题目：
 
 {markdown_text}
 
@@ -340,13 +363,57 @@ async def _extract_questions_single_batch(markdown_text: str, llm_caller) -> Lis
 1. 仔细识别题号，不要遗漏任何题目
 2. 题目内容要完整，包括所有子问题
 3. 答案和解析要简洁"""
+        max_tokens = 16384
+    else:
+        system_prompt = """你是小学数学题目提取助手。从试卷文本中提取所有题目，只做抽题，不要解题。
+
+任务：
+1. 识别所有题目（通过题号：1. 2. 3. 或 一、二、三、或 (1) (2) 或 ① ② 等）
+2. 提取每道题的完整内容（题干+所有子问题）
+3. 判断题型、知识点、难度
+4. 记录题目所在的页码（从页面标记"第 X 页"中识别）
+
+重要规则：
+1. 文本中有几道题就提取几道，不能遗漏
+2. 多个子问题（(1)(2)或①②）合并为一道大题
+3. 题目内容必须完整，从题号开始到下一题号或页面结束
+4. 不要生成答案，不要生成解析
+5. 忽略页眉、页脚、页码等无关内容
+6. 从文本中的"第 X 页"标记识别题目所在页码，记录到 page_no 字段
+
+输出纯 JSON：
+{
+  "questions": [
+    {
+      "question_no": "题号",
+      "question_text": "完整题目内容",
+      "page_no": 1,
+      "question_type": "fill_blank|choice|calculation|problem_solving|other",
+      "difficulty": "基础|中等|挑战",
+      "knowledge_point": "知识点",
+      "knowledge_category": "几何|计算|数论|方程与应用|逻辑|基础|其他",
+      "is_complete": true,
+      "confidence": 0.95
+    }
+  ]
+}"""
+
+        user_prompt = f"""以下是从数学试卷PDF中提取的文本内容，请只提取所有题目本身：
+
+{markdown_text}
+
+请严格按照JSON格式输出所有题目。注意：
+1. 仔细识别题号，不要遗漏任何题目
+2. 题目内容要完整，包括所有子问题
+3. 不要输出答案和解析"""
+        max_tokens = 8192
 
     try:
         logger.info(f"Calling LLM with markdown text ({len(markdown_text)} chars)")
         response = await llm_caller(
             messages=[{"role": "user", "content": user_prompt}],
             system_prompt=system_prompt,
-            max_tokens=16384,  # Increased for longer responses
+            max_tokens=max_tokens,
             timeout=180.0,
         )
 

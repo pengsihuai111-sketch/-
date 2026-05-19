@@ -450,6 +450,45 @@ def _extract_json_objects(s: str) -> list:
     return objects
 
 
+def _trim_to_balanced_json(text: str) -> str:
+    """Trim model output to the first complete JSON object or array."""
+    json_start = text.find('{')
+    arr_start = text.find('[')
+    if json_start == -1 and arr_start == -1:
+        return text
+
+    if arr_start >= 0 and (json_start == -1 or arr_start < json_start):
+        start = arr_start
+        open_ch, close_ch = '[', ']'
+    else:
+        start = json_start
+        open_ch, close_ch = '{', '}'
+
+    depth = 0
+    in_string = False
+    escape = False
+    for i in range(start, len(text)):
+        ch = text[i]
+        if escape:
+            escape = False
+            continue
+        if ch == '\\':
+            escape = True
+            continue
+        if ch == '"':
+            in_string = not in_string
+            continue
+        if in_string:
+            continue
+        if ch == open_ch:
+            depth += 1
+        elif ch == close_ch:
+            depth -= 1
+            if depth == 0:
+                return text[start:i + 1]
+    return text[start:]
+
+
 def _parse_response(text: str) -> List[dict]:
     """Parse JSON from AI response, handling markdown code blocks and encoding issues."""
     text = text.strip()
@@ -472,7 +511,7 @@ def _parse_response(text: str) -> List[dict]:
         start = json_start
     if start > 0:
         logger.debug(f"Stripped {start} chars before JSON start")
-        text = text[start:]
+    text = _trim_to_balanced_json(text)
 
     # Try direct JSON parse first
     try:
@@ -593,30 +632,41 @@ def _fill_defaults(questions: List[dict]) -> List[dict]:
 async def _fill_missing_answers(questions: List[dict]) -> List[dict]:
     """Post-recognition: auto-generate answers/solutions for questions missing them."""
     filled_count = 0
-    for i, q in enumerate(questions):
+    semaphore = asyncio.Semaphore(MAX_PARALLEL_RECOGNITIONS)
+
+    async def _generate_for_question(i: int, q: dict):
         if q.get("answer") and q.get("solution"):
-            continue  # already complete
+            return i, None
 
         # Skip filling if question is known to be incomplete (missing content)
         if not q.get("is_complete", True) or len(q.get("question_text", "").strip()) < 10:
             logger.info(f"Skipping answer generation for question {i+1}: incomplete or too short")
-            continue
+            return i, None
 
         try:
-            logger.info(f"Generating answer for question {i+1}: {q.get('question_text', '')[:60]}...")
-            result = await generate_answer(
-                q.get("question_text", ""),
-                q.get("question_type", ""),
-                q.get("knowledge_point", ""),
-            )
-            if not q.get("answer") and result.get("answer"):
-                q["answer"] = result["answer"]
-                filled_count += 1
-            if not q.get("solution") and result.get("solution"):
-                q["solution"] = result["solution"]
-                filled_count += 1
+            async with semaphore:
+                logger.info(f"Generating answer for question {i+1}: {q.get('question_text', '')[:60]}...")
+                result = await generate_answer(
+                    q.get("question_text", ""),
+                    q.get("question_type", ""),
+                    q.get("knowledge_point", ""),
+                )
+                return i, result
         except Exception as e:
             logger.warning(f"Answer generation failed for question {i+1}: {e}")
+            return i, None
+
+    tasks = [_generate_for_question(i, q) for i, q in enumerate(questions)]
+    for i, result in await asyncio.gather(*tasks):
+        if not result:
+            continue
+        q = questions[i]
+        if not q.get("answer") and result.get("answer"):
+            q["answer"] = result["answer"]
+            filled_count += 1
+        if not q.get("solution") and result.get("solution"):
+            q["solution"] = result["solution"]
+            filled_count += 1
 
     if filled_count > 0:
         logger.info(f"Auto-filled {filled_count} missing answer/solution fields")
@@ -778,6 +828,9 @@ async def _call_vision_api_two_stage(image_bytes: bytes, filename: str) -> List[
 
     Note: For PDFs, we use full image with question number hints instead of
     cropping to avoid incomplete questions due to inaccurate bbox estimation.
+
+    OPTIMIZATION: For multi-question images (3+ questions), falls back to single-stage
+    to avoid excessive API calls and reduce recognition time.
     """
     # Stage 1: Detect questions
     detection = await _detect_questions(image_bytes, filename)
@@ -789,6 +842,13 @@ async def _call_vision_api_two_stage(image_bytes: bytes, filename: str) -> List[
 
     logger.info(f"Stage 1 complete: detected {len(detected_questions)} questions")
 
+    # OPTIMIZATION: If 3+ questions detected, use single-stage for speed
+    # Single-stage is faster (1 API call vs N+1) and avoids question confusion
+    if len(detected_questions) >= 3:
+        logger.info(f"Detected {len(detected_questions)} questions, using single-stage for speed")
+        return await _call_vision_api_fallback(image_bytes, filename)
+
+    # For 1-2 questions, continue with two-stage for better accuracy
     # Determine if we should use full image (recommended for PDFs)
     # PDF pages and structured documents should use full image to avoid cropping issues
     use_full_image = True  # Always use full image for better accuracy
@@ -834,18 +894,26 @@ async def _call_vision_api_fallback(image_bytes: bytes, filename: str) -> List[d
     full_page_prompt = """你是小学数学识别解题助手。提取图片中全部题目并完整解答。
 
 核心规则：
-1. 图片有几道题提取几道，数题号，不能少！
-2. 多子问（(1)(2)或①②）合并为一道
-3. 忽略手写和批改，只提取印刷体
-4. 公式用 LaTeX：\\frac{1}{2}、\\sqrt{3}
-5. 必须给出每道题的完整答案和分步解析，含单位
-6. 多子问答法: "(1)答案; (2)答案"
-7. 有图形时 has_image=true
-8. 题目不完整时 is_complete=false
+1. 仔细数题号，图片有几道题就提取几道，一道都不能少！
+2. 每道题必须完整提取：从题号开始到下一题开始（或页面结束）的所有内容
+3. 多子问（(1)(2)或①②）属于同一道大题，要全部提取到一起
+4. 忽略手写和批改痕迹，只提取印刷体原题
+5. 公式用 LaTeX：\\frac{1}{2}、\\sqrt{3}、x^2
+6. 必须给出每道题的完整答案和分步解析，含单位
+7. 多子问答案格式: "(1)答案1; (2)答案2; (3)答案3"
+8. 有图形、图表时设置 has_image=true 并描述图形内容
+9. 题目不完整或被截断时设置 is_complete=false
+
+重要提示：
+- 不要遗漏任何题目，即使题目很短或很简单
+- 不要把一道题拆成多道，也不要把多道题合并成一道
+- 题号要准确（1. 2. 3. 或 一、二、三、等）
+- 每道题的 question_text 必须包含题号
 
 输出纯 JSON：
 {"questions":[{
-  "question_text":"完整题目内容",
+  "question_no":"1",
+  "question_text":"1. 完整题目内容（包含题号）",
   "answer":"答案（含单位）",
   "solution":"分步解析",
   "question_type":"fill_blank|choice|calculation|problem_solving|other",
@@ -853,7 +921,9 @@ async def _call_vision_api_fallback(image_bytes: bytes, filename: str) -> List[d
   "knowledge_point":"具体知识点名称",
   "knowledge_category":"几何|计算|数论|方程与应用|逻辑|基础|其他",
   "has_image":false,
-  "is_complete":true
+  "diagram_description":"",
+  "is_complete":true,
+  "confidence":0.95
 }]}"""
 
     for attempt in range(2):
@@ -882,6 +952,81 @@ async def _call_vision_api_fallback(image_bytes: bytes, filename: str) -> List[d
         except Exception as e:
             if attempt == 0:
                 logger.warning(f"Fallback unexpected error: {e}. Retrying...")
+                continue
+            raise
+
+
+def _fill_extraction_defaults(questions: List[dict]) -> List[dict]:
+    """Fill minimal defaults for extraction-only flows without generating warnings."""
+    for q in questions:
+        q.setdefault("question_no", "")
+        q.setdefault("question_text", "")
+        q.setdefault("question_type", "other")
+        q.setdefault("difficulty", "中等")
+        q.setdefault("knowledge_point", "")
+        q.setdefault("knowledge_category", "其他")
+        q.setdefault("has_image", False)
+        q.setdefault("is_complete", True)
+        q.setdefault("confidence", 0.8)
+        q.setdefault("answer", "")
+        q.setdefault("solution", "")
+    return questions
+
+
+async def _call_vision_api_extract_only(image_bytes: bytes, filename: str) -> List[dict]:
+    """Fast extraction-only path for PDFs: extract question stems without solving them."""
+    info = get_image_info(image_bytes)
+    w, h = info["width"], info["height"]
+
+    extract_only_prompt = """你是小学数学题目提取助手。请从图片中提取全部题目，只做抽题，不要解题。
+
+核心规则：
+1. 仔细数题号，图片有几道题就提取几道，一道都不能少。
+2. 每道题必须完整提取：从题号开始到下一题开始（或页面结束）的所有内容。
+3. 多子问（(1)(2)或①②）属于同一道大题，要提取到一起。
+4. 忽略手写和批改痕迹，只提取印刷体原题。
+5. 公式用 LaTeX：\\frac{1}{2}、\\sqrt{3}、x^2。
+6. 不要生成答案，不要生成解析。
+7. 有图形、图表时设置 has_image=true，并简要描述。
+8. 题目不完整或被截断时设置 is_complete=false。
+
+输出纯 JSON：
+{"questions":[{
+  "question_no":"1",
+  "question_text":"1. 完整题目内容（包含题号）",
+  "question_type":"fill_blank|choice|calculation|problem_solving|other",
+  "difficulty":"基础|中等|挑战",
+  "knowledge_point":"具体知识点名称",
+  "knowledge_category":"几何|计算|数论|方程与应用|逻辑|基础|其他",
+  "has_image":false,
+  "diagram_description":"",
+  "is_complete":true,
+  "confidence":0.95
+}]}"""
+
+    for attempt in range(2):
+        try:
+            content_text = await _call_multimodal_llm(
+                image_bytes=image_bytes,
+                text_prompt=f"提取这张图片中的全部数学题目（{w}×{h}像素），只需要题干，不需要答案和解析。",
+                system_prompt=extract_only_prompt,
+                max_tokens=3072,
+                timeout=90.0,
+            )
+            if not content_text:
+                if attempt == 0:
+                    continue
+                raise ValueError("AI returned empty response")
+            questions = _parse_response(content_text)
+            return _fill_extraction_defaults(questions)
+        except (ValueError, RuntimeError) as e:
+            if attempt == 0:
+                logger.warning(f"Extract-only attempt {attempt + 1} failed: {e}. Retrying...")
+                continue
+            raise
+        except Exception as e:
+            if attempt == 0:
+                logger.warning(f"Extract-only unexpected error: {e}. Retrying...")
                 continue
             raise
 
@@ -922,7 +1067,8 @@ async def recognize_questions(
     image_bytes: bytes,
     filename: str = "",
     strategy: RecognitionStrategy = RecognitionStrategy.AUTO,
-    auto_enhance: bool = True
+    auto_enhance: bool = True,
+    include_answers: bool = True,
 ) -> dict:
     """Recognize questions from an image using configurable strategy.
 
@@ -972,7 +1118,10 @@ async def recognize_questions(
 
     # Try recognition based on selected strategy
     try:
-        if strategy == RecognitionStrategy.TWO_STAGE:
+        if not include_answers:
+            logger.info(f"Using extract-only recognition for {filename}")
+            questions = await _call_vision_api_extract_only(image_bytes, filename)
+        elif strategy == RecognitionStrategy.TWO_STAGE:
             logger.info(f"Using two-stage recognition for {filename}")
             questions = await _call_vision_api_two_stage(image_bytes, filename)
         else:
@@ -984,7 +1133,10 @@ async def recognize_questions(
     # Fallback to alternative strategy if primary failed
     if questions is None or len(questions) == 0:
         try:
-            if strategy == RecognitionStrategy.TWO_STAGE:
+            if not include_answers:
+                logger.info("Extract-only path failed, trying standard single-stage extraction fallback")
+                questions = await _call_vision_api_extract_only(image_bytes, filename)
+            elif strategy == RecognitionStrategy.TWO_STAGE:
                 logger.info("Two-stage failed, trying single-stage fallback")
                 questions = await _call_vision_api_fallback(image_bytes, filename)
             else:
@@ -1019,7 +1171,7 @@ async def recognize_questions(
                 raise RuntimeError(f"识别失败: {str(ocr_error)}")
 
     # Post-processing: auto-generate answers/solutions for questions missing them
-    if questions:
+    if include_answers and questions:
         missing_count = sum(1 for q in questions if not q.get("answer") or not q.get("solution"))
         if missing_count > 0:
             logger.info(f"{missing_count}/{len(questions)} questions missing answer/solution, auto-generating...")

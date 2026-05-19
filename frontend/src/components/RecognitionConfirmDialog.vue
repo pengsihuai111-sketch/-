@@ -8,8 +8,8 @@
         <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
           <el-tag>{{ result.file_type === 'pdf' ? 'PDF' : '图片' }}</el-tag>
           <el-tag type="info">{{ result.page_count }} 页</el-tag>
-          <el-tag :type="result.status === 'need_confirm' ? 'warning' : 'success'">
-            {{ result.status === 'need_confirm' ? '待确认' : '已完成' }}
+          <el-tag :type="result.status === 'partial_failed' ? 'danger' : result.status === 'need_confirm' ? 'warning' : 'success'">
+            {{ result.status === 'partial_failed' ? '部分成功' : result.status === 'need_confirm' ? '待确认' : '已完成' }}
           </el-tag>
           <span style="font-size:13px;color:#999">任务 #{{ result.task_id }}</span>
         </div>
@@ -360,10 +360,12 @@ async function handleConfirm() {
         const qData = {
           q_id: '',
           knowledge_point: kps[0] || block.ai_result?.knowledge_points?.[0] || '未知',
-          knowledge_category: '',
+          knowledge_category: block.ai_result?.knowledge_category || '',
           question_type: block._editedType || 'problem_solving',
           difficulty: block.ai_result?.difficulty || '中等',
           question_text: block._editedText || '',
+          answer: block.ai_answer || '',
+          solution: block.ai_solution || '',
           image_path: imageUrl || '',
           has_image: !!imageUrl,
         }

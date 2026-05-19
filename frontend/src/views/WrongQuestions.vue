@@ -20,6 +20,11 @@
               </template>
             </el-table-column>
             <el-table-column prop="exam_name" label="考试" width="100" />
+            <el-table-column label="录入时间" width="110">
+              <template #default="{ row }">
+                {{ formatCreatedDate(row.created_date || row.created_at || row.createdDate || row.exam_date) }}
+              </template>
+            </el-table-column>
             <el-table-column label="错误类型" width="100">
               <template #default="{ row }">{{ row.error_type || '-' }}</template>
             </el-table-column>
@@ -134,11 +139,11 @@
 
             <!-- 截图技巧提示 -->
             <div style="margin-top:16px;padding:12px;background:#f0f9ff;border:1px solid #b3d8ff;border-radius:6px;text-align:left;max-width:420px;margin-left:auto;margin-right:auto">
-              <div style="font-weight:bold;color:#409eff;margin-bottom:8px;font-size:13px">📸 截图技巧（提高识别准确率）</div>
+              <div style="font-weight:bold;color:#409eff;margin-bottom:8px;font-size:13px">📸 截图技巧（提高识别速度和准确率）</div>
               <ul style="margin:0;padding-left:20px;font-size:12px;color:#606266;line-height:2">
                 <li>包含<strong>完整题目</strong>（题号、题干、选项、图表）</li>
                 <li>确保文字<strong>清晰可读</strong>，避免模糊、倾斜</li>
-                <li>一次只截<strong>一道题</strong>，避免多题混淆</li>
+                <li>可一次截取<strong>多道题</strong>，系统会按题号拆分识别</li>
                 <li>留出适当边距，不要紧贴边缘裁剪</li>
               </ul>
             </div>
@@ -152,7 +157,7 @@
 
           <!-- 图片预览 + 裁剪 -->
           <div v-if="capturedImage && !ocrLoading" style="margin-top:16px;text-align:center">
-            <div style="margin-bottom:8px;color:#909399;font-size:13px">点击下方按钮裁剪题目区域，或重新选择</div>
+            <div style="margin-bottom:8px;color:#909399;font-size:13px">可裁剪单题区域，也可以直接识别整张多题图片</div>
             <div style="max-height:360px;overflow:hidden;border:1px solid #dcdfe6;border-radius:4px;display:inline-block">
               <img :src="capturedImage" style="max-width:100%;max-height:360px;display:block" />
             </div>
@@ -166,7 +171,7 @@
           <!-- 加载中 -->
           <div v-if="ocrLoading" style="text-align:center;padding:40px">
             <el-icon class="is-loading" size="32"><Loading /></el-icon>
-            <p style="margin-top:12px;color:#666">正在通过 AI 识别中，请稍候...</p>
+            <p style="margin-top:12px;color:#666">正在整图识别并拆分题目，请稍候...</p>
           </div>
 
           <!-- 识别结果（普通模式） -->
@@ -325,7 +330,9 @@
                 <el-tag size="small">{{ pdfResult.file_type === 'pdf' ? 'PDF文件' : '图片文件' }}</el-tag>
               </div>
             </div>
-            <el-button type="primary" size="large" @click="openPdfConfirmDialog">查看并确认识别结果</el-button>
+            <el-button type="primary" size="large" @click="openPdfConfirmDialog">
+              查看题目和答案
+            </el-button>
             <el-button @click="clearPdfFile">重新上传</el-button>
           </div>
         </el-tab-pane>
@@ -456,11 +463,42 @@ const totalCount = ref(0)
 const detailVisible = ref(false)
 const currentDetailQuestion = ref(null)
 const currentDetailRow = ref(null)
+const answerBackfillRefreshTimers = []
 
 function showDetail(row) {
   currentDetailQuestion.value = row.question || row
   currentDetailRow.value = row
   detailVisible.value = true
+}
+
+function syncCurrentDetailRow() {
+  const recordId = currentDetailRow.value?.record_id
+  if (!recordId) return
+  const latest = wrongList.value.find(item => item.record_id === recordId)
+  if (!latest) return
+  currentDetailRow.value = latest
+  currentDetailQuestion.value = latest.question || latest
+}
+
+function clearAnswerBackfillRefreshTimers() {
+  while (answerBackfillRefreshTimers.length) {
+    clearTimeout(answerBackfillRefreshTimers.pop())
+  }
+}
+
+function scheduleAnswerBackfillRefresh() {
+  clearAnswerBackfillRefreshTimers()
+  const delays = [4000, 12000, 25000]
+  delays.forEach((delay) => {
+    const timerId = setTimeout(async () => {
+      try {
+        await loadData()
+      } catch (e) {
+        // ignore background refresh errors
+      }
+    }, delay)
+    answerBackfillRefreshTimers.push(timerId)
+  })
 }
 
 // ===== Add dialog state =====
@@ -498,6 +536,7 @@ const pdfFile = ref(null)
 const pdfRecognizing = ref(false)
 const pdfResult = ref(null)
 const pdfConfirmVisible = ref(false)
+const pdfPreparingConfirm = ref(false)
 const pdfTaskId = ref(null)
 const pdfProgress = ref({ current_page: 0, total_pages: 0, questions_found: 0, message: '' })
 let progressTimer = null
@@ -610,12 +649,25 @@ const errorStats = computed(() => {
 })
 
 // ===== Data loading =====
+function formatCreatedDate(value) {
+  if (!value) return '-'
+  const text = String(value)
+  if (text.length >= 16) {
+    return text.slice(0, 16).replace('T', ' ')
+  }
+  return text.replace('T', ' ')
+}
+
 async function loadData() {
   loading.value = true
   try {
     const res = await listWrongQuestions({ page: pageNum.value, page_size: pageSize.value })
-    wrongList.value = res.wrong_questions || []
+    wrongList.value = (res.wrong_questions || []).map(item => ({
+      ...item,
+      created_date: item.created_date || item.created_at || item.createdDate || item.exam_date || null,
+    }))
     totalCount.value = res.total || 0
+    syncCurrentDetailRow()
   } finally {
     loading.value = false
   }
@@ -922,6 +974,7 @@ function showAddDialog() {
   pdfResult.value = null
   pdfRecognizing.value = false
   pdfConfirmVisible.value = false
+  pdfPreparingConfirm.value = false
   pdfTaskId.value = null
   pdfProgress.value = { current_page: 0, total_pages: 0, questions_found: 0, message: '' }
   addVisible.value = true
@@ -1074,6 +1127,7 @@ function onPdfFileSelected(e) {
   }
   pdfFile.value = file
   pdfResult.value = null
+  pdfPreparingConfirm.value = false
   // Reset input so same file can be re-selected
   e.target.value = ''
 }
@@ -1091,6 +1145,7 @@ function onDropPdf(e) {
   }
   pdfFile.value = file
   pdfResult.value = null
+  pdfPreparingConfirm.value = false
 }
 
 function formatFileSize(bytes) {
@@ -1105,11 +1160,13 @@ async function startPdfRecognition() {
 
   pdfRecognizing.value = true
   pdfResult.value = null
+  pdfPreparingConfirm.value = false
   pdfProgress.value = { current_page: 0, total_pages: 0, questions_found: 0, message: '正在上传...' }
 
   const formData = new FormData()
   formData.append('file', pdfFile.value)
-  formData.append('use_markdown', 'false')  // 使用视觉模型识别（推荐，准确率高）
+  formData.append('use_markdown', 'false')
+  formData.append('recognition_mode', 'auto')
   formData.append('match_question_bank', 'true')
   formData.append('remove_correction_marks', 'true')
 
@@ -1154,19 +1211,21 @@ function startProgressPolling() {
       }
 
       // Terminal states
-      if (progress.status === 'need_confirm' || progress.status === 'failed' || progress.status === 'confirmed') {
+      if (progress.status === 'need_confirm' || progress.status === 'partial_failed' || progress.status === 'failed' || progress.status === 'confirmed') {
         stopProgressPolling()
         pdfRecognizing.value = false
 
-        if (progress.status === 'need_confirm') {
+        if (progress.status === 'need_confirm' || progress.status === 'partial_failed') {
           // Fetch full result
           try {
             const fullResult = await getRecognitionTask(pdfTaskId.value)
             pdfResult.value = fullResult
             if (!fullResult.pages?.length || !fullResult.pages.some(p => p.questions?.length)) {
               ElMessage.warning('未能从 PDF 中识别出题目，请确认 PDF 清晰可读')
+            } else if (progress.status === 'partial_failed') {
+              ElMessage.warning(`部分页面识别失败，已识别 ${totalPdfQuestions.value} 道题，可先确认结果`)
             } else {
-              ElMessage.success(`识别完成，共 ${fullResult.page_count} 页 ${totalPdfQuestions.value} 道题`)
+              ElMessage.success(`识别完成，共 ${fullResult.page_count} 页 ${totalPdfQuestions.value} 道题，答案已生成`)
             }
           } catch (e) {
             ElMessage.error('获取识别结果失败')
@@ -1193,12 +1252,14 @@ function clearPdfFile() {
   pdfFile.value = null
   pdfResult.value = null
   pdfConfirmVisible.value = false
+  pdfPreparingConfirm.value = false
   pdfTaskId.value = null
   pdfProgress.value = { current_page: 0, total_pages: 0, questions_found: 0, message: '' }
   pdfRecognizing.value = false
 }
 
-function openPdfConfirmDialog() {
+async function openPdfConfirmDialog() {
+  if (!pdfResult.value?.task_id || pdfPreparingConfirm.value) return
   pdfConfirmVisible.value = true
 }
 
@@ -1207,6 +1268,7 @@ function onPdfConfirmed() {
   ElMessage.success('错题已加入错题本')
   addVisible.value = false
   loadData()
+  scheduleAnswerBackfillRefresh()
 }
 
 onMounted(() => {
@@ -1218,5 +1280,6 @@ onMounted(() => {
 onUnmounted(() => {
   document.removeEventListener('paste', handlePaste)
   stopProgressPolling()
+  clearAnswerBackfillRefreshTimers()
 })
 </script>
