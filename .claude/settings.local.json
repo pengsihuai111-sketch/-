@@ -1,0 +1,51 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python *)",
+      "Bash(pip *)",
+      "Bash(npm *)",
+      "Bash(npx *)",
+      "Bash(mysql *)",
+      "Bash(curl *)",
+      "Bash(git *)",
+      "Bash(powershell *)",
+      "Bash(taskkill *)",
+      "Bash(tasklist *)",
+      "Bash(ipconfig)",
+      "Bash(netstat *)",
+      "WebSearch",
+      "WebFetch(domain:localhost)",
+      "WebFetch(domain:api-docs.deepseek.com)",
+      "WebFetch(domain:github.com)",
+      "Bash(ls -la tesseract_installer.exe 2>&1; ls \"C:/Program Files/Tesseract-OCR/tesseract.exe\" 2>&1)",
+      "Read(//c/Program Files/Tesseract-OCR/**)",
+      "Bash(start /wait tesseract_installer.exe /S /D=C:\\\\Tesseract-OCR)",
+      "Read(//c/Tesseract-OCR/**)",
+      "Bash(Get-Content \"d:\\\\project\\\\题库管理\\\\math_bank_v4\\\\backend\\\\.env\")",
+      "Bash(Select-String -Pattern \"OCR|VISION|OPENAI|CLAUDE|KIMI|BAIDU|ALIYUN\")",
+      "Bash(Select-Object -First 10)",
+      "PowerShell(pip uninstall rapidocr-onnxruntime onnxruntime cnocr cnstd rapidocr torch torchvision torchmetrics pytorch-lightning ultralytics wandb -y 2>&1)",
+      "Bash(mkdir -p \"d:\\\\project\\\\题库管理\\\\.claude\\\\skills\\\\design-md\")",
+      "Edit(/.claude/skills/design-md/**)",
+      "Bash(findstr \"built error\")",
+      "WebFetch(domain:www.zuoyebang.com)",
+      "Bash(findstr /i \"opencv\")",
+      "PowerShell(Get-Content \"$env:USERPROFILE\\\\.claude\\\\settings.json\" -ErrorAction SilentlyContinue)",
+      "PowerShell(Get-Content \"$env:USERPROFILE\\\\.claude\\\\settings.json\" -ErrorAction SilentlyContinue | Select-String \"model\" -Context 0,2)",
+      "Bash(Get-ChildItem -Path \"D:\\\\project\\\\题库管理\" -Depth 1)",
+      "Bash(Select-Object Name, PSIsContainer)",
+      "PowerShell(Set-Location \"D:\\\\project\\\\题库管理\\\\math_bank_v4\\\\backend\"; Start-Process -NoNewWindow -FilePath \"python\" -ArgumentList \"run.py\" -PassThru | ForEach-Object { $proc = $_ }; Start-Sleep 8; try { $r = Invoke-WebRequest -Uri \"http://localhost:8000/api/health\" -UseBasicParsing -TimeoutSec 10; Write-Output $r.Content } catch { Write-Output \"Backend not reachable: $_\" })",
+      "Bash(Get-ChildItem \"D:\\\\project\\\\题库管理\" -Depth 2 -Directory)",
+      "Bash(Select-Object FullName)",
+      "PowerShell(Get-Content *)",
+      "PowerShell(Get-NetTCPConnection *)",
+      "PowerShell(try { $r = Invoke-WebRequest -Uri \"http://localhost:8000/docs\" -Method Head -TimeoutSec 5; Write-Output \"Backend running: $\\($r.StatusCode\\)\" } catch { Write-Output \"Backend not running: $_\" })",
+      "PowerShell(Get-Process *)",
+      "PowerShell(taskkill *)",
+      "Skill(xiaoshengchu-math-bank)"
+    ],
+    "additionalDirectories": [
+      "d:\\project\\题库管理\\.claude\\skills"
+    ]
+  }
+}

@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<style>
+body { font-family: "SimSun", "宋体", serif; font-size: 12pt; line-height: 1.8; }
+.header { text-align: center; border-bottom: 2px solid #333; padding-bottom: 10px; margin-bottom: 20px; }
+.header h1 { font-size: 18pt; margin: 0; }
+.header p { font-size: 10pt; color: #666; margin: 5px 0; }
+/* 不同天分页 */
+.day-section { margin: 30px 0; page-break-before: always; }
+.day-section:first-child { page-break-before: auto; }
+.day-title { font-size: 16pt; font-weight: bold; color: #1a5276; border-left: 5px solid #1a5276; padding-left: 10px; margin: 20px 0; }
+.question { margin: 20px 0; padding: 15px; border: 1px solid #ddd; border-radius: 5px; page-break-inside: avoid; }
+.q-header { font-size: 11pt; color: #2874a6; font-weight: bold; margin-bottom: 8px; }
+.q-body { font-size: 12pt; margin: 10px 0; }
+.q-image { text-align: center; margin: 10px 0; }
+.q-image img { max-width: 300px; height: auto; border: 1px solid #ccc; }
+/* 答题区样式：虚线上边框，不单独分页，和题目在一起 */
+.solve-area { 
+    border-top: 1px dashed #999; 
+    margin-top: 15px; 
+    padding-top: 10px; 
+    color: #999; 
+    font-size: 10pt;
+    min-height: 120px;
+    page-break-inside: avoid;
+}
+.answer-section { background: #f8f9fa; padding: 15px; margin: 10px 0; border-left: 4px solid #27ae60; }
+.answer-title { font-weight: bold; color: #27ae60; }
+.answer-text { color: #333; }
+.solution-text { color: #555; font-size: 11pt; margin-top: 5px; }
+.page-break { page-break-after: always; }
+</style>
+</head>
+<body>
+
+<!-- 
+排版修改记录 (2026-05-03 v3):
+1. .day-section 添加 page-break-before: always（不同天分页）
+2. .solve-area 恢复为虚线上边框（去掉边框和浅灰背景）
+3. .solve-area min-height: 120px（保持2倍宽度）
+4. .question 和 .solve-area 保持 page-break-inside: avoid（题与答题区不分开）
+5. 第2天Q8（比和比例）已删除
+6. Q1答案17.34万元，Q5答案108
+-->
+
+<div class="header">
+<h1>冯紫桐 错题练习单（最终版）</h1>
+<p>薄弱专项：经济问题 | 浓度问题 | 火车过桥 | 几何面积 | 特色计算</p>
+<p>建议用时：第1天30分钟 | 第2天35分钟</p>
+</div>
+<div class="day-section">
+<div class="day-title">第1天（6题）</div>
+<p style="color:#666;font-size:10pt;">今日专项：经济x1 + 浓度x1 + 火车过桥x1 + 几何x2 + 等差数列x1</p>
+
+<div class="question">
+<div class="q-header">Q1 [经济问题]|入学数学真卷（五）(5.2) 填空第5题</div>
+<div class="q-body">老王有一套价值68万元的小户型，由于急需现金，他以市价的九折优惠卖给老李。过了一段时间后，房价上涨了10%，老王又想从老李处把小户型买回来。老李同意在现在市场价的基础上再加价5%卖给老王。如果老王要从老李手上买回这个房子，他总共要损失多少万元？</div>
+<div class="solve-area">解题区域：</div>
+</div>
+
+<div class="question">
+<div class="q-header">Q2 [浓度问题]|入学数学真卷（二）(5.4) 填空第5题</div>
+<div class="q-body">浓度为70%的酒精溶液500克与浓度为50%的酒精溶液300克混合后所得到的酒精溶液的浓度是多少？</div>
+<div class="solve-area">解题区域：</div>
+</div>
+
+<div class="question">
+<div class="q-header">Q3 [火车过桥]|入学数学真卷（六） 解答第5题</div>
+<div class="q-body">四、五、六三个年级各有100名学生去春游，都分成2列(竖排)并列行进。四、五、六年级的学生相邻两行之间的距离分别为1m,2m,3m，年级之间相距5m。他们每分钟都走90m，整个队伍通过某座桥用4分钟，那么这座桥长多少米？</div>
+<div class="solve-area">解题区域：</div>
+</div>
+
+<div class="question">
+<div class="q-header">Q4 [几何面积·图]|入学数学真卷（一）(7.6) 图像第1题</div>
+<div class="q-body">如图，四个圆的半径都是2厘米，图中的阴影部分的面积是多少？(π取3.14)</div>
+<div class="q-image"><img src="images/DG_2025_W1_组合图形求面积_geom.png" alt="geom"></div>
+<div class="solve-area">解题区域：</div>
+</div>
+
+<div class="question">
+<div class="q-header">Q5 [几何面积·图]|入学数学真卷（二）(5.4) 填空第3题</div>
+<div class="q-body">如图，两个正方形摆在一起，其中大正方形边长为12，小正方形边长为4，那么阴影部分面积是多少？(π取3)</div>
+<div class="q-image"><img src="images/DG_2025_W2_组合图形求面积_geom.png" alt="geom"></div>
+<div class="solve-area">解题区域：</div>
+</div>
+
+<div class="question">
+<div class="q-header">Q6 [等差数列]|入学数学真卷（四）(12.7) 填空第5题</div>
+<div class="q-body">有A,B两组数，每组都按一定规律排列着，并且每组各有26个数，A组数中前几个数是这样排列的：1,6,11,16,21,...；B组数中最后几个数是这样排列的：...,110,115,120,125,130。那么，A,B两组数中所有数的和是多少？</div>
+<div class="solve-area">解题区域：</div>
+</div>
+
+</div>
+
+<div class="day-section">
+<div class="day-title">第2天（9题）</div>
+<p style="color:#666;font-size:10pt;">今日专项：经济x1 + 浓度x1 + 几何x2 + 特色计算x2 + 行程x1 + 工程x1 + 分数应用x1</p>
+
+<div class="question">
+<div class="q-header">Q1 [经济问题]|入学数学真卷（一） 解答第1题</div>
+<div class="q-body">某品牌商为响应商城新春狂欢大促活动，12月精选出一款春季新品外套同时做线上、线下推广促销。线下专柜按外套标价打八折销售，线上云购在外套标价基础上降价200元。线下专柜花1600元购买的外套的数量与线上云购花1200元购买的外套数量相同。(1)该外套的标价为多少元？(2)12月该外套在线下专柜售出100件，线上云购售出200件，1月品牌商继续对该外套让利促销，线下专柜和线上云购分别在12月售价的基础上降价a%销售，据统计1月线下专柜销量比12月增加了20%，线上云购销量比12月增加了3a%，1月线上线下合计销售总额达到10.8万元。求a的值。</div>
+<div class="solve-area">解题区域：</div>
+</div>
+
+<div class="question">
+<div class="q-header">Q2 [浓度问题]|入学数学真卷（二） 解答第1题</div>
+<div class="q-body">甲杯中有浓度为40%的糖水溶液60克，乙杯中有浓度为20%的糖水溶液40克，先从甲杯中取出一定量的糖水倒入乙杯中搅匀，然后从乙杯中取出同样的糖水倒入甲杯中搅匀，此时甲、乙两杯中的糖水浓度相等，问从甲杯中取出了多少克糖水倒入乙杯？</div>
+<div class="solve-area">解题区域：</div>
+</div>
+
+<div class="question">
+<div class="q-header">Q3 [几何面积·图]|入学数学真卷（一） 解答第1题</div>
+<div class="q-body">如图，正方形ABCD的边长为1，以A、B、C、D为圆心，以正方形的边长为半径画弧，求阴影部分的面积。</div>
+<div class="q-image"><img src="images/EW_2025_T1_JD7_几何面积_geom.png" alt="geom"></div>
+<div class="solve-area">解题区域：</div>
+</div>
+
+<div class="question">
+<div class="q-header">Q4 [几何面积·图]|入学数学真卷（二） 解答第1题</div>
+<div class="q-body">如图，平行四边形ABCD中，三角形AEF的面积是12cm²，求阴影部分的面积。</div>
+<div class="q-image"><img src="images/EW_2025_T2_JD7_几何面积_geom.png" alt="geom"></div>
+<div class="solve-area">解题区域：</div>
+</div>
+
+<div class="question">
+<div class="q-header">Q5 [特色计算]|入学数学真卷（三） 计算第4题</div>
+<div class="q-body">1/(1×2) + 1/(2×3) + 1/(3×4) + ... + 1/(22×23) = ?</div>
+<div class="solve-area">解题区域：</div>
+</div>
+
+<div class="question">
+<div class="q-header">Q6 [特色计算]|入学数学真卷（五）(5.2) 计算第2题</div>
+<div class="q-body">190091/(17281²-17268×17281) = ?</div>
+<div class="solve-area">解题区域：</div>
+</div>
+
+<div class="question">
+<div class="q-header">Q7 [行程问题·图]|入学数学真卷（六） 解答第2题</div>
+<div class="q-body">如图，A、B两城相距480千米，快车从A城出发，速度为80千米/时；慢车从B城出发，速度为60千米/时。两车同时出发相向而行，几小时后相遇？</div>
+<div class="q-image"><img src="images/EW_2025_T6_XZ4_行程问题_geom.png" alt="geom"></div>
+<div class="solve-area">解题区域：</div>
+</div>
+
+<div class="question">
+<div class="q-header">Q8 [工程问题]|入学数学真卷（四） 解答第2题</div>
+<div class="q-body">甲、乙两人合作完成一批零件要8天。甲先做3天后，乙又独做1天，还剩总数的11/16还未完成。已知甲比乙每天多做70个零件，求这批零件的总数。</div>
+<div class="solve-area">解题区域：</div>
+</div>
+
+<div class="question">
+<div class="q-header">Q9 [分数的应用]|入学数学真卷（五）(7.28) 解答第3题</div>
+<div class="q-body">有两个容器，A容器中有1升水，B容器是空的。第一次将A容器里的水的1/2倒入B容器中，然后第二次将B容器里的水的1/3倒回A容器中，第三次再将A容器里的水的1/4倒入B容器中，然后第四次将B容器里的水的1/5倒入A容器中，……，如此下去，倒了第九次后，A容器里有多少水？</div>
+<div class="solve-area">解题区域：</div>
+</div>
+
+</div>
+
+<div style="page-break-after:always"></div>
+
+<div class="header">
+<h1>答案卷（最终版）</h1>
+<p>冯紫桐 错题练习单 - 参考答案与解析</p>
+</div>
+
+<div class="day-section">
+<div class="day-title">第1天 答案</div>
+
+<div class="answer-section">
+<div class="answer-title">Q1 [AI推导-已复核] | 经济问题</div>
+<div class="answer-text"><b>答案：</b>17.34万元</div>
+<div class="solution-text"><b>解析：</b>①老王卖出价：68×90% = 61.2万元 ②此时市场价：68×(1+10%) = 74.8万元 ③老李卖出价（老王买回价）：74.8×(1+5%) = 78.54万元 ④老王总损失：78.54 - 61.2 = 17.34万元
+
+【关键思路】分步计算两次交易价格，损失=买回价-卖出价</div>
+</div>
+
+<div class="answer-section">
+<div class="answer-title">Q2 [AI推导-待复核] | 浓度问题</div>
+<div class="answer-text"><b>答案：</b>62.5%</div>
+<div class="solution-text"><b>解析：</b>①总溶质：500×70%+300×50%=350+150=500克 ②总溶液：500+300=800克 ③浓度：500÷800×100%=62.5%</div>
+</div>
+
+<div class="answer-section">
+<div class="answer-title">Q3 [AI推导-待复核] | 火车过桥</div>
+<div class="answer-text"><b>答案：</b>56米</div>
+<div class="solution-text"><b>解析：</b>①每列50人，49个间隔 ②队伍长：(49×1)+5+(49×2)+5+(49×3)=304米 ③行进距离：90×4=360米 ④桥长：360-304=56米</div>
+</div>
+
+<div class="answer-section">
+<div class="answer-title">Q4 [AI推导-待复核] | 几何面积</div>
+<div class="answer-text"><b>答案：</b>3.44cm²</div>
+<div class="solution-text"><b>解析：</b>①连接四圆心得正方形，边长=4cm，面积=16cm² ②四个扇形合为一个整圆：π×2²=12.56cm² ③阴影=16-12.56=3.44cm²</div>
+</div>
+
+<div class="answer-section">
+<div class="answer-title">Q5 [AI推导-已复核] | 几何面积</div>
+<div class="answer-text"><b>答案：</b>108</div>
+<div class="solution-text"><b>解析：</b>①扇形面积 = 1/4 × π × r² = 1/4 × 3 × 12² = 108 ②连接A到E形成左上三角形：底=(12+4)=16，高=4，面积=1/2×16×4=32 ③连接D到F形成空白三角形：底=(12+4)=16，高=4，面积=1/2×16×4=32 ④阴影面积 = 扇形面积 + 左上三角形 - 空白三角形 = 108 + 32 - 32 = 108
+
+【关键思路】扇形面积加上辅助三角形再减去重叠空白区域</div>
+</div>
+
+<div class="answer-section">
+<div class="answer-title">Q6 [AI推导-待复核] | 等差数列</div>
+<div class="answer-text"><b>答案：</b>3406</div>
+<div class="solution-text"><b>解析：</b>①A组：首项1,公差5,26项,S=26×(1+126)÷2=1651 ②B组：首项5,末项130,S=26×(5+130)÷2=1755 ③总和=3406</div>
+</div>
+
+</div>
+
+<div class="day-section">
+<div class="day-title">第2天 答案</div>
+
+<div class="answer-section">
+<div class="answer-title">Q1 [题库已有] | 经济问题</div>
+<div class="answer-text"><b>答案：</b>见题库原答案</div>
+<div class="solution-text"><b>解析：</b>见题库原解析</div>
+</div>
+
+<div class="answer-section">
+<div class="answer-title">Q2 [题库已有] | 浓度问题</div>
+<div class="answer-text"><b>答案：</b>见题库原答案</div>
+<div class="solution-text"><b>解析：</b>见题库原解析</div>
+</div>
+
+<div class="answer-section">
+<div class="answer-title">Q3 [题库已有] | 几何面积</div>
+<div class="answer-text"><b>答案：</b>见题库原答案</div>
+<div class="solution-text"><b>解析：</b>见题库原解析</div>
+</div>
+
+<div class="answer-section">
+<div class="answer-title">Q4 [题库已有] | 几何面积</div>
+<div class="answer-text"><b>答案：</b>见题库原答案</div>
+<div class="solution-text"><b>解析：</b>见题库原解析</div>
+</div>
+
+<div class="answer-section">
+<div class="answer-title">Q5 [题库已有] | 特色计算</div>
+<div class="answer-text"><b>答案：</b>22/23</div>
+<div class="solution-text"><b>解析：</b>分数裂项：1/(1×2)=1-1/2, 1/(2×3)=1/2-1/3,..., 1/(22×23)=1/22-1/23。相加后中间项抵消，剩余1-1/23=22/23</div>
+</div>
+
+<div class="answer-section">
+<div class="answer-title">Q6 [AI推导-已复核] | 特色计算</div>
+<div class="answer-text"><b>答案：</b>11/13</div>
+<div class="solution-text"><b>解析：</b>①分母提取17281：17281×(17281-17268)=17281×13 ②原式=190091÷(17281×13) ③190091=17281×11 ④结果=11/13
+
+【关键技巧】提取公因数约分，分子分母找共同因数</div>
+</div>
+
+<div class="answer-section">
+<div class="answer-title">Q7 [题库已有] | 行程问题</div>
+<div class="answer-text"><b>答案：</b>见题库原答案</div>
+<div class="solution-text"><b>解析：</b>见题库原解析</div>
+</div>
+
+<div class="answer-section">
+<div class="answer-title">Q8 [题库已有] | 工程问题</div>
+<div class="answer-text"><b>答案：</b>见题库原答案</div>
+<div class="solution-text"><b>解析：</b>见题库原解析</div>
+</div>
+
+<div class="answer-section">
+<div class="answer-title">Q9 [AI推导-待复核] | 分数的应用</div>
+<div class="answer-text"><b>答案：</b>700毫升</div>
+<div class="solution-text"><b>解析：</b>①设总量x，第一天后剩6x/7 ②第二天后剩(6x/7)×(5/6)=5x/7 ③第三天500=5x/7 ④x=700毫升</div>
+</div>
+
+</div>
+
+</body>
+</html>
