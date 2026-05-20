@@ -365,7 +365,7 @@
     </template>
 
     <!-- AI智能生成对话框 -->
-    <AIPracticeDialog ref="aiDialogRef" @generated="onAIGenerated" />
+    <AIPracticeDialog v-model="showAIDialog" @created="onAIGenerated" />
   </div>
 </template>
 
@@ -1026,19 +1026,17 @@ async function submitMarking() {
 }
 
 // ===== AI智能生成 =====
-const aiDialogRef = ref(null)
+const showAIDialog = ref(false)
 
 function openAIDialog() {
-  if (aiDialogRef.value) {
-    aiDialogRef.value.open()
-  }
+  showAIDialog.value = true
 }
 
-function onAIGenerated(sheet) {
+function onAIGenerated(result) {
   // AI生成完成后，刷新练习单列表
-  lastSheet.value = sheet
+  showAIDialog.value = false
   loadSheets()
-  ElMessage.success('AI练习单生成成功！')
+  ElMessage.success(`AI练习单已生成 ${result.created_count || 0} 套`)
 }
 
 // ===== 初始化 =====
