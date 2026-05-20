@@ -88,4 +88,9 @@ response_full.txt
 
 # Temp JSON files
 CUsershp-pcAppDataLocalTempqid_test.json
+C:Usershp-pcAppDataLocalTempqid_test.json
+
+# Project temporary files
+project_structure.txt
+index_optimization_plan.txt
 

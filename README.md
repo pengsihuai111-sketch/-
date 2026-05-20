@@ -46,40 +46,72 @@
 ## 项目结构
 
 ```
-project-root/
-├── README.md                    # 项目说明文档
-├── .env.example                 # 环境变量模板
-├── .gitignore                   # Git忽略配置
-├── math_bank_v4/               # 主项目目录
-│   ├── backend/                # 后端代码
-│   │   ├── app/               # 应用核心
-│   │   │   ├── api/          # API路由
-│   │   │   ├── models/       # 数据模型
-│   │   │   ├── schemas/      # Pydantic模式
-│   │   │   ├── services/     # 业务逻辑
-│   │   │   ├── utils/        # 工具函数
-│   │   │   ├── config.py     # 配置文件
-│   │   │   ├── database.py   # 数据库连接
-│   │   │   └── main.py       # 应用入口
-│   │   ├── requirements.txt   # Python依赖
-│   │   └── run.py            # 启动脚本
-│   └── frontend/              # 前端代码
-│       ├── src/              # 源代码
-│       ├── package.json      # Node依赖
-│       └── vite.config.js    # Vite配置
-├── docs/                       # 文档目录
-│   ├── design/               # 设计文档
-│   ├── recognition/          # 识别功能文档
-│   ├── deployment/           # 部署文档
-│   └── troubleshooting/      # 故障排查
+题库管理/
+├── backend/                    # 后端服务（FastAPI）
+│   ├── app/                   # 应用核心
+│   │   ├── api/              # API路由层（Controller）
+│   │   ├── services/         # 业务逻辑层（Service）✨
+│   │   ├── repositories/     # 数据访问层（Repository）✨
+│   │   ├── models/           # 数据模型（ORM）
+│   │   ├── schemas/          # 数据验证（Pydantic）
+│   │   ├── core/             # 核心模块（config/security/exceptions）✨
+│   │   ├── utils/            # 工具函数
+│   │   ├── database.py       # 数据库连接
+│   │   └── main.py           # 应用入口
+│   ├── migrations/           # 数据库迁移脚本✨
+│   ├── requirements.txt      # Python依赖
+│   └── .env                  # 环境变量配置
+│
+├── frontend/                   # 前端应用（Vue 3）
+│   ├── src/                  # 源代码
+│   │   ├── views/           # 页面组件
+│   │   ├── components/      # 通用组件
+│   │   ├── api/             # API请求封装
+│   │   ├── router/          # 路由配置
+│   │   ├── store/           # 状态管理（Pinia）
+│   │   └── utils/           # 工具函数
+│   ├── package.json         # Node依赖
+│   └── vite.config.js       # Vite配置
+│
+├── uploads/                    # 上传文件存储
+│   ├── images/               # 题目图片
+│   └── temp/                 # 临时文件
+│
 ├── scripts/                    # 脚本工具
+│   ├── deploy/               # 部署脚本
+│   ├── setup/                # 环境配置脚本
+│   ├── utils/                # 工具脚本
 │   ├── start_backend.bat     # 启动后端（Windows）
 │   ├── start_frontend.bat    # 启动前端（Windows）
 │   └── deploy_to_baidu_cloud.sh  # 部署脚本
-└── tests/                      # 测试文件
-    ├── backend/              # 后端测试
-    └── recognition/          # 识别功能测试
+│
+├── tests/                      # 测试文件
+│   ├── backend/              # 后端测试
+│   ├── recognition/          # 识别功能测试
+│   └── fixtures/             # 测试数据
+│
+├── docs/                       # 文档目录
+│   ├── design/               # 设计文档
+│   ├── deployment/           # 部署文档
+│   ├── api/                  # API文档
+│   ├── reports/              # 功能报告
+│   └── samples/              # 样例文件
+│
+├── database/                   # 数据库相关
+│   └── schema.sql            # 数据库结构
+│
+├── archive/                    # 归档（旧版本）
+│   └── math_bank_v3/         # v3版本备份
+│
+├── .env.example               # 环境变量模板
+├── .gitignore                 # Git忽略配置
+├── README.md                  # 项目说明文档
+├── PROJECT_STRUCTURE.md       # 项目结构详细文档✨
+├── OPTIMIZATION_SUMMARY.md    # 优化总结报告✨
+└── PERFORMANCE_OPTIMIZATION.md # 性能优化文档✨
 ```
+
+> ✨ 标记表示最近优化新增的内容
 
 ## 快速开始
 
@@ -105,7 +137,7 @@ SOURCE database/schema.sql;
 
 ### 2. 配置环境变量
 
-复制 `.env.example` 到 `math_bank_v4/backend/.env` 并填写配置：
+复制 `.env.example` 到 `backend/.env` 并填写配置：
 
 ```bash
 # 数据库配置
@@ -126,7 +158,7 @@ VISION_API_KEY=your_api_key
 ### 3. 启动后端服务
 
 ```bash
-cd math_bank_v4/backend
+cd backend
 
 # 安装依赖
 pip install -r requirements.txt
@@ -140,7 +172,7 @@ python run.py
 ### 4. 启动前端服务
 
 ```bash
-cd math_bank_v4/frontend
+cd frontend
 
 # 安装依赖
 npm install
