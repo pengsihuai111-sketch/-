@@ -5,7 +5,7 @@ from fastapi import Request
 from fastapi.responses import JSONResponse
 import traceback
 import logging
-from .api import auth, questions, wrong_questions, practice, payment
+from .api import auth, questions, wrong_questions, practice, practice_ai, payment
 from .database import engine, Base
 from .models import *  # noqa: ensure models registered
 from .core.config import UploadConfig, CORSConfig
@@ -48,6 +48,7 @@ app.include_router(auth.router)
 app.include_router(questions.router)
 app.include_router(wrong_questions.router)
 app.include_router(practice.router)
+app.include_router(practice_ai.router)
 app.include_router(payment.router)
 
 

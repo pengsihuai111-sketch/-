@@ -130,3 +130,28 @@ export function getPrices() {
 export function getMemberInfo() {
   return request.get('/payment/member-info')
 }
+
+// AI智能生成练习单
+export function aiGeneratePreview(data) {
+  return request.post('/practice/ai-generate-preview', data, {
+    timeout: 180000,
+  })
+}
+
+export function aiGenerateConfirm(data) {
+  return request.post('/practice/ai-generate-confirm', data, {
+    timeout: 60000,
+  })
+}
+
+export function aiReplaceQuestion(data) {
+  return request.post('/practice/ai-replace-question', data, {
+    timeout: 60000,
+  })
+}
+
+export function aiSupplementQuestion(data) {
+  return request.post('/practice/ai-supplement-question', data, {
+    timeout: 60000,
+  })
+}
