@@ -97,6 +97,9 @@
               <el-form-item>
                 <el-button type="primary" style="width: 100%" :disabled="totalSelectedQuestions === 0" @click="handleGenerate" :loading="genLoading">生成练习单</el-button>
               </el-form-item>
+              <el-form-item>
+                <el-button type="success" style="width: 100%" @click="openAIDialog">🤖 AI智能生成</el-button>
+              </el-form-item>
               <template v-if="form.sheet_type === 'wrong_redo'">
                 <el-divider border-style="dashed" />
 
@@ -360,6 +363,9 @@
         </div>
       </el-card>
     </template>
+
+    <!-- AI智能生成对话框 -->
+    <AIPracticeDialog ref="aiDialogRef" @generated="onAIGenerated" />
   </div>
 </template>
 
@@ -372,6 +378,7 @@ import { Loading } from '@element-plus/icons-vue'
 import html2canvas from 'html2canvas'
 import { jsPDF } from 'jspdf'
 import { renderMath } from '../utils/math'
+import AIPracticeDialog from '../components/AIPracticeDialog.vue'
 
 // ===== 列表模式 =====
 const form = reactive({ sheet_name: '', sheet_type: 'daily', difficulties: ['基础', '中等', '挑战'] })
@@ -1016,6 +1023,22 @@ async function submitMarking() {
   } finally {
     submitting.value = false
   }
+}
+
+// ===== AI智能生成 =====
+const aiDialogRef = ref(null)
+
+function openAIDialog() {
+  if (aiDialogRef.value) {
+    aiDialogRef.value.open()
+  }
+}
+
+function onAIGenerated(sheet) {
+  // AI生成完成后，刷新练习单列表
+  lastSheet.value = sheet
+  loadSheets()
+  ElMessage.success('AI练习单生成成功！')
 }
 
 // ===== 初始化 =====
