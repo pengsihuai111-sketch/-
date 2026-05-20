@@ -8,7 +8,7 @@ import logging
 from .api import auth, questions, wrong_questions, practice, payment
 from .database import engine, Base
 from .models import *  # noqa: ensure models registered
-from .config import UPLOAD_DIR
+from .core.config import UploadConfig, CORSConfig
 
 logger = logging.getLogger(__name__)
 
@@ -28,10 +28,10 @@ async def global_exception_handler(request: Request, exc: Exception):
         content={"detail": f"服务器内部错误: {str(exc)}"}
     )
 
-# CORS
+# CORS - 从环境变量读取允许的源
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_origins=CORSConfig.ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -39,9 +39,9 @@ app.add_middleware(
 
 # 静态文件服务（上传的图片）
 import os
-os.makedirs(UPLOAD_DIR, exist_ok=True)
-if os.path.exists(UPLOAD_DIR):
-    app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
+os.makedirs(UploadConfig.BASE_DIR, exist_ok=True)
+if os.path.exists(UploadConfig.BASE_DIR):
+    app.mount("/uploads", StaticFiles(directory=UploadConfig.BASE_DIR), name="uploads")
 
 # 注册路由
 app.include_router(auth.router)

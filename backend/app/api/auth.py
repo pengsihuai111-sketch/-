@@ -5,7 +5,7 @@ from datetime import datetime
 from ..database import get_db
 from ..models import User, MemberType, UserStatus
 from ..schemas import UserRegister, UserLogin, LoginResponse, UserProfile
-from ..utils.auth import hash_password, verify_password, create_access_token, get_current_user_id
+from ..core.security import hash_password, verify_password, create_access_token, get_current_user_id, needs_rehash
 
 router = APIRouter(prefix="/api/auth", tags=["认证"])
 
@@ -54,6 +54,10 @@ def login(req: UserLogin, db: Session = Depends(get_db)):
 
     if user.status == UserStatus.suspended:
         raise HTTPException(status_code=403, detail="账号已被停用")
+
+    # 自动升级旧密码格式到bcrypt
+    if needs_rehash(user.password_hash):
+        user.password_hash = hash_password(req.password)
 
     user.last_login = datetime.now()
     db.commit()
