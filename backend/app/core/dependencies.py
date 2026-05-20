@@ -29,4 +29,22 @@ def get_mastery_service(
     return MasteryService(mastery_repo, db)
 
 
+def get_recognition_service(db: Session = Depends(get_db)):
+    """获取RecognitionService实例"""
+    from ..services.recognition_service import RecognitionService
+    return RecognitionService(db)
+
+
+def get_diagnosis_service(db: Session = Depends(get_db)):
+    """获取DiagnosisService实例"""
+    from ..services.diagnosis_service import DiagnosisService
+    return DiagnosisService(db)
+
+
+def get_wrong_question_service(db: Session = Depends(get_db)):
+    """获取WrongQuestionService实例"""
+    from ..services.wrong_question_service import WrongQuestionService
+    return WrongQuestionService(db)
+
+
 # 其他Repository和Service依赖将在后续阶段添加
