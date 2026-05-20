@@ -47,4 +47,10 @@ def get_wrong_question_service(db: Session = Depends(get_db)):
     return WrongQuestionService(db)
 
 
+def get_practice_service(db: Session = Depends(get_db)):
+    """获取PracticeService实例"""
+    from ..services.practice_service import PracticeService
+    return PracticeService(db)
+
+
 # 其他Repository和Service依赖将在后续阶段添加
