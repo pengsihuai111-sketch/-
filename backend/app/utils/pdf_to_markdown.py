@@ -22,9 +22,15 @@ PAGE_MARKER_REGEX = re.compile(
     r"---\s*\n\*\*(?:PAGE|Page|page|第)?\s*(\d+).*?\*\*\s*\n---\s*\n*",
     re.MULTILINE,
 )
-QUESTION_START_REGEX = re.compile(r"^\s*(\d+)\s*[.．、]\s*(.+)?$")
+QUESTION_START_REGEX = re.compile(
+    r"^\s*(?:题目|第)?\s*(\d+)\s*(?:题|[.．、:：)]|\))\s*(.+)?$",
+    re.IGNORECASE,
+)
+MARKDOWN_PREFIX_REGEX = re.compile(r"^\s*(?:#{1,6}\s+|[-*+]\s+|>\s*)?")
 HEADING_REGEX = re.compile(r"^\s{0,3}#{1,6}\s+")
 DIVIDER_REGEX = re.compile(r"^[-*_]{3,}$")
+ANSWER_HEADING_REGEX = re.compile(r"^\s*\*{0,2}\s*(?:答案|解答|解析)\s*[:：]?\s*\*{0,2}\s*$")
+SECTION_DIVIDER_REGEX = re.compile(r"(?m)^\s*---+\s*$")
 
 
 try:
@@ -294,8 +300,9 @@ def _extract_questions_from_markdown_locally(markdown_text: str) -> List[Dict]:
                     current_question["lines"].append("")
                 continue
 
-            if HEADING_REGEX.match(line) or DIVIDER_REGEX.match(line):
-                continue
+            line = MARKDOWN_PREFIX_REGEX.sub("", line).strip()
+            line = re.sub(r"^\*\*(.+?)\*\*$", r"\1", line).strip()
+            line = re.sub(r"^\*\*(\d+\s*(?:[.．、:：)]|\)))\*\*\s*", r"\1 ", line).strip()
 
             question_match = QUESTION_START_REGEX.match(line)
             if question_match:
@@ -309,12 +316,127 @@ def _extract_questions_from_markdown_locally(markdown_text: str) -> List[Dict]:
                 }
                 continue
 
+            if HEADING_REGEX.match(raw_line.strip()) or DIVIDER_REGEX.match(line):
+                continue
+
             if current_question:
                 current_question["lines"].append(line)
 
         flush_current_question()
 
     logger.info(f"Local markdown fallback extracted {len(questions)} questions")
+    section_questions = _extract_questions_from_markdown_sections(markdown_text)
+    if len(section_questions) > len(questions):
+        logger.info(
+            "Section markdown fallback extracted %s questions, replacing numbered result of %s",
+            len(section_questions),
+            len(questions),
+        )
+        return section_questions
+    return questions
+
+
+def _strip_markdown_heading(line: str) -> str:
+    line = MARKDOWN_PREFIX_REGEX.sub("", line or "").strip()
+    line = re.sub(r"^\*\*(.+?)\*\*$", r"\1", line).strip()
+    line = re.sub(r"^\*\*(\d+\s*(?:[.．、:：)]|\)))\*\*\s*", r"\1 ", line).strip()
+    return line
+
+
+def _clean_markdown_question_section(section: str) -> str:
+    """Clean one markdown section that likely contains exactly one question."""
+    lines: List[str] = []
+    for raw_line in section.splitlines():
+        line = raw_line.strip()
+        if not line:
+            if lines and lines[-1] != "":
+                lines.append("")
+            continue
+
+        if line.startswith(">") and ("注" in line or "说明" in line):
+            continue
+        stripped = _strip_markdown_heading(line)
+        if ANSWER_HEADING_REGEX.match(stripped):
+            break
+        if ("注：" in stripped or "说明：" in stripped) and "题" in stripped and "分" in stripped:
+            continue
+        if DIVIDER_REGEX.match(stripped):
+            continue
+        lines.append(stripped)
+
+    while lines and not lines[0]:
+        lines.pop(0)
+    while lines and not lines[-1]:
+        lines.pop()
+    return "\n".join(lines).strip()
+
+
+def _section_title_has_question_signal(text: str) -> bool:
+    if not text:
+        return False
+    signals = (
+        "题",
+        "选择",
+        "填空",
+        "解答",
+        "计算",
+        "应用",
+        "如图",
+        "求",
+        "多少",
+        "如果",
+        "已知",
+        "A.",
+        "A．",
+        "A、",
+    )
+    return any(signal in text for signal in signals)
+
+
+def _extract_questions_from_markdown_sections(markdown_text: str) -> List[Dict]:
+    """Extract one question per markdown section split by horizontal dividers."""
+    raw_sections = SECTION_DIVIDER_REGEX.split(markdown_text)
+    questions: List[Dict] = []
+    used_question_nos: set[str] = set()
+
+    for raw_section in raw_sections:
+        text = _clean_markdown_question_section(raw_section)
+        if not text:
+            continue
+
+        lines = [line for line in text.splitlines() if line.strip()]
+        if len(lines) == 1 and not _section_title_has_question_signal(lines[0]):
+            continue
+
+        compact_text = re.sub(r"\s+", "", text)
+        if len(compact_text) < 12:
+            continue
+        if not _section_title_has_question_signal(text):
+            continue
+
+        question_no = str(len(questions) + 1)
+        title_match = re.search(r"(?:题目|解答题|选择题|填空题)\s*(\d+)", text)
+        if title_match and title_match.group(1) not in used_question_nos:
+            question_no = title_match.group(1)
+        used_question_nos.add(question_no)
+
+        questions.append(
+            {
+                "question_no": question_no,
+                "question_text": text,
+                "page_no": 1,
+                "answer": "",
+                "solution": "",
+                "question_type": _guess_question_type(text),
+                "difficulty": "中等",
+                "knowledge_point": "",
+                "knowledge_category": "其他",
+                "is_complete": True,
+                "confidence": 0.55,
+            }
+        )
+
+    logger.info(f"Section markdown fallback extracted {len(questions)} questions")
     return questions
 
 
@@ -427,7 +549,14 @@ async def _build_local_result(markdown_text: str, llm_caller) -> List[Dict]:
     questions = _extract_questions_from_markdown_locally(markdown_text)
     if not questions:
         return questions
-    return await _enrich_questions_with_answers(questions, llm_caller)
+    try:
+        return await asyncio.wait_for(
+            _enrich_questions_with_answers(questions, llm_caller),
+            timeout=45.0,
+        )
+    except Exception as exc:
+        logger.warning(f"Local question answer enrichment timed out or failed: {exc}")
+        return questions
 
 
 async def extract_questions_from_markdown(
@@ -439,6 +568,12 @@ async def extract_questions_from_markdown(
     del pdf_images
 
     page_sections = _extract_page_sections(markdown_text)
+    divider_sections = _extract_questions_from_markdown_sections(markdown_text)
+    if len(divider_sections) >= 2:
+        logger.info(
+            f"Using section parser for divider-based markdown ({len(divider_sections)} questions)"
+        )
+        return divider_sections
 
     try:
         if len(page_sections) > 4 or len(markdown_text) > 8000:

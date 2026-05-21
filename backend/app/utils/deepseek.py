@@ -1327,55 +1327,58 @@ async def match_question_candidates(recognized_text: str, keywords: list,
 
 
 async def generate_answer(question_text: str, question_type: str = "", knowledge_point: str = "") -> dict:
-    """用配置的文本 LLM（DeepSeek 或 Doubao）自动生成题目答案和解析"""
+    """用配置的文本 LLM 自动生成题目答案和解析。"""
     prompt = (
-        "你是一位资深小学数学老师，擅长解答小学数学题。请仔细审题，确保答案准确无误。\n\n"
+        "你是一位资深小学数学老师。请认真审题，为下面这道题生成准确答案和解析。\n\n"
         f"题目：{question_text}\n"
         f"题型：{question_type or '未知'}\n"
         f"知识点：{knowledge_point or '未知'}\n\n"
-        "【要求】\n"
-        "1. 仔细读题，确认题目完整再作答\n"
-        "2. 答案要准确，包含单位（如：元、米、千克等）\n"
-        "3. 如果题目有多个子问（如 (1)(2)(3)），答案要对应每个子问，用分号或换行分隔\n"
-        "4. 如果题目依赖配图/图表/图形，无法仅从文字判断答案，请在 answer 中注明'需要配合原图作答'，并给出基于文字部分的推导\n"
-        "5. 解题步骤用中文描述，分步写清楚，适合小学生理解\n"
-        "6. 如果无法确定答案，请如实说明，不要编造\n\n"
-        "请严格按照以下 JSON 格式输出（不要包含 markdown 包裹）：\n"
+        "要求：\n"
+        "1. 答案要准确，必要时包含单位。\n"
+        "2. 如果题目有多个小问，请在 answer 中逐项作答。\n"
+        "3. 如果题目依赖配图或表格，仍要基于文字部分尽量推导，并在 answer 中说明需要结合原图。\n"
+        "4. solution 用中文分步说明，适合小学学生理解。\n"
+        "5. 严格输出 JSON，不要输出 markdown 代码块。\n\n"
+        "JSON 格式：\n"
         '{\n'
-        '  "answer": "最终答案（含单位，多子问用分号或换行分隔）",\n'
-        '  "solution": "分步解析，用中文描述每一步的计算过程和思路"\n'
+        '  "answer": "最终答案",\n'
+        '  "solution": "分步解析"\n'
         '}'
     )
 
-    try:
-        content = await _call_text_llm(
-            messages=[{"role": "user", "content": prompt}],
-            system_prompt="你是一位资深小学数学老师，擅长解答小学数学题。输出严格的 JSON，不要 markdown 包裹。",
-            max_tokens=4096,
-            timeout=60.0,
-            json_output=True,
-        )
-
-        if not content:
-            return {"answer": "", "solution": ""}
-
-        # Try to parse JSON response
-        content = content.strip()
-        if content.startswith("```"):
-            match = re.search(r"```(?:json)?\s*([\s\S]*?)```", content)
-            if match:
-                content = match.group(1)
-
+    for attempt in range(2):
         try:
-            parsed = json.loads(content)
-            return {
-                "answer": parsed.get("answer", ""),
-                "solution": parsed.get("solution", ""),
-            }
-        except json.JSONDecodeError:
-            logger.warning(f"Failed to parse text LLM answer JSON: {content[:200]}")
-            return {"answer": "", "solution": ""}
+            content = await _call_text_llm(
+                messages=[{"role": "user", "content": prompt}],
+                system_prompt="你是一位资深小学数学老师。只输出严格 JSON，不要输出 markdown 代码块。",
+                max_tokens=4096,
+                timeout=90.0,
+                json_output=True,
+            )
 
-    except Exception as e:
-        logger.error(f"Text LLM answer generation error: {e}")
-        return {"answer": "", "solution": ""}
+            if not content:
+                continue
+
+            content = content.strip()
+            if content.startswith("```"):
+                match = re.search(r"```(?:json)?\s*([\s\S]*?)```", content)
+                if match:
+                    content = match.group(1).strip()
+
+            try:
+                parsed = json.loads(_fix_latex_json_escapes(content))
+            except json.JSONDecodeError:
+                match = re.search(r"\{[\s\S]*\}", content)
+                if not match:
+                    logger.warning(f"Failed to parse text LLM answer JSON: {content[:200]}")
+                    continue
+                parsed = json.loads(_fix_latex_json_escapes(match.group(0)))
+
+            answer = str(parsed.get("answer", "") or "").strip()
+            solution = str(parsed.get("solution", "") or "").strip()
+            if answer or solution:
+                return {"answer": answer, "solution": solution}
+        except Exception as e:
+            logger.warning(f"Text LLM answer generation attempt {attempt + 1} failed: {e}")
+
+    return {"answer": "", "solution": ""}

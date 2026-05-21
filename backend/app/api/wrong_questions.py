@@ -1316,20 +1316,33 @@ async def _fill_missing_answers_for_questions(questions: List[dict]) -> List[dic
     semaphore = asyncio.Semaphore(3)
 
     async def fill_one(question: dict) -> None:
-        if question.get("answer") and question.get("solution"):
+        answer = str(question.get("answer") or "").strip()
+        solution = str(question.get("solution") or "").strip()
+        if answer and solution:
             return
         text = (question.get("question_text") or "").strip()
         if not text:
             return
-        async with semaphore:
-            result = await generate_answer(
-                text,
-                question.get("question_type", ""),
-                question.get("knowledge_point", ""),
+
+        result = {"answer": "", "solution": ""}
+        for attempt in range(2):
+            async with semaphore:
+                result = await generate_answer(
+                    text,
+                    question.get("question_type", ""),
+                    question.get("knowledge_point", ""),
+                )
+            if (answer or result.get("answer")) and (solution or result.get("solution")):
+                break
+            logger.warning(
+                "Answer fill attempt %s returned incomplete result for question %s",
+                attempt + 1,
+                question.get("question_no", ""),
             )
-        if not question.get("answer") and result.get("answer"):
+
+        if not answer and result.get("answer"):
             question["answer"] = result["answer"]
-        if not question.get("solution") and result.get("solution"):
+        if not solution and result.get("solution"):
             question["solution"] = result["solution"]
 
     await asyncio.gather(*(fill_one(question) for question in questions))
@@ -1728,6 +1741,48 @@ def get_recognition_task(
 
     # Try to get page URLs from the first block's task
     pages = list(pages_map.values())
+    if not pages and task.raw_result:
+        try:
+            raw_questions = json.loads(task.raw_result)
+            if isinstance(raw_questions, dict):
+                raw_questions = raw_questions.get("questions", [])
+            if isinstance(raw_questions, list):
+                for index, question in enumerate(raw_questions, start=1):
+                    page_no = int(question.get("page_no") or 1)
+                    if page_no not in pages_map:
+                        pages_map[page_no] = RecognitionPageOut(
+                            page_no=page_no,
+                            image_url="",
+                            clean_image_url="",
+                            questions=[],
+                        )
+                    answer = str(question.get("answer") or "").strip()
+                    solution = str(question.get("solution") or "").strip()
+                    pages_map[page_no].questions.append(RecognitionBlockOut(
+                        block_id=f"p{page_no}_q{question.get('question_no') or index}",
+                        page_no=page_no,
+                        question_no=str(question.get("question_no") or index),
+                        ai_result=AiResultOut(
+                            question_text=question.get("question_text", ""),
+                            answer=answer,
+                            solution=solution,
+                            question_type=question.get("question_type", "other"),
+                            knowledge_points=question.get("knowledge_points") or (
+                                [question.get("knowledge_point")] if question.get("knowledge_point") else []
+                            ),
+                            difficulty=question.get("difficulty", "中等"),
+                            keywords=question.get("keywords", []),
+                            confidence=_normalize_confidence(question.get("confidence", 0.8)),
+                        ),
+                        ai_answer=answer,
+                        ai_solution=solution,
+                        matched_questions=[],
+                        suggested_action="need_confirm",
+                        need_manual_confirm=True,
+                    ))
+                pages = list(pages_map.values())
+        except Exception as exc:
+            logger.warning("Failed to rebuild recognition pages from raw_result: %s", exc)
 
     return RecognizeAdvancedResponse(
         task_id=task.id,

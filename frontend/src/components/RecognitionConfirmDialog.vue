@@ -79,14 +79,14 @@
                   <el-input v-model="block._editedKps" placeholder="逗号分隔"
                             @input="onEditBlock(block)" />
                 </el-form-item>
-                <el-form-item label="答案" v-if="block.ai_answer">
+                <el-form-item label="答案" v-if="getBlockAnswer(block)">
                   <div style="padding:8px;background:#f0f9ff;border-radius:4px;color:#0369a1;white-space:pre-wrap">
-                    {{ block.ai_answer }}
+                    {{ getBlockAnswer(block) }}
                   </div>
                 </el-form-item>
-                <el-form-item label="解析" v-if="block.ai_solution">
+                <el-form-item label="解析" v-if="getBlockSolution(block)">
                   <div style="padding:8px;background:#f0fdf4;border-radius:4px;color:#15803d;white-space:pre-wrap;max-height:120px;overflow-y:auto">
-                    {{ block.ai_solution }}
+                    {{ getBlockSolution(block) }}
                   </div>
                 </el-form-item>
                 <el-form-item label="配图">
@@ -236,6 +236,14 @@ const totalCount = computed(() => {
 
 const canConfirm = computed(() => selectedCount.value > 0)
 
+function getBlockAnswer(block) {
+  return block?.ai_answer || block?.ai_result?.answer || ''
+}
+
+function getBlockSolution(block) {
+  return block?.ai_solution || block?.ai_result?.solution || ''
+}
+
 function updateSelectionState() {
   const selected = selectedCount.value
   const total = totalCount.value
@@ -364,6 +372,8 @@ async function handleConfirm() {
           question_type: block._editedType || 'problem_solving',
           difficulty: block.ai_result?.difficulty || '中等',
           question_text: block._editedText || '',
+          answer: getBlockAnswer(block),
+          solution: getBlockSolution(block),
           image_path: imageUrl || '',
           has_image: !!imageUrl,
         }
