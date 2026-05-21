@@ -279,16 +279,16 @@
         </el-tab-pane>
 
         <!-- 模式3：PDF上传识别（整卷识别） -->
-        <el-tab-pane label="PDF上传" name="pdf">
+        <el-tab-pane label="文件上传" name="pdf">
           <!-- 上传区（未选择文件） -->
           <div v-if="!pdfFile && !pdfRecognizing && !pdfResult"
                style="border:2px dashed #dcdfe6;border-radius:8px;padding:40px 20px;text-align:center;cursor:pointer"
                @click="triggerPdfSelect" @dragover.prevent @drop.prevent="onDropPdf">
             <el-icon size="48" color="#c0c4cc"><UploadFilled /></el-icon>
-            <p style="margin-top:12px;color:#666;font-size:14px">点击选择 PDF 文件，或拖拽 PDF 到此处</p>
-            <p style="margin-top:6px;color:#909399;font-size:12px">支持电子版 PDF、扫描版 PDF · 建议 ≤ 50MB · ≤ 30 页</p>
-            <p style="margin-top:4px;color:#c0c4cc;font-size:12px">将自动识别整张试卷的所有题目</p>
-            <input ref="pdfInputRef" type="file" accept=".pdf,application/pdf" style="display:none" @change="onPdfFileSelected" />
+            <p style="margin-top:12px;color:#666;font-size:14px">点击选择文件，或拖拽文件到此处</p>
+            <p style="margin-top:6px;color:#909399;font-size:12px">支持 PDF 文件（≤50MB）或 Markdown 文件（≤10MB）</p>
+            <p style="margin-top:4px;color:#c0c4cc;font-size:12px">将自动识别文件中的所有题目</p>
+            <input ref="pdfInputRef" type="file" accept=".pdf,.md,.markdown,application/pdf,text/markdown,text/plain" style="display:none" @change="onPdfFileSelected" />
           </div>
 
           <!-- 已选文件，待识别 -->
@@ -297,7 +297,7 @@
               <p style="font-size:16px;font-weight:bold;color:#303133;word-break:break-all">{{ pdfFile.name }}</p>
               <p style="color:#909399;font-size:13px;margin-top:4px">{{ formatFileSize(pdfFile.size) }}</p>
             </div>
-            <el-button type="primary" size="large" @click="startPdfRecognition">开始识别整张试卷</el-button>
+            <el-button type="primary" size="large" @click="startPdfRecognition">开始识别文件</el-button>
             <el-button @click="clearPdfFile">重新选择</el-button>
           </div>
 
@@ -308,8 +308,8 @@
               :total-pages="pdfProgress.total_pages || 0"
               :questions-found="pdfProgress.questions_found || 0"
               :message="pdfProgress.message || '正在准备识别...'"
-              title="正在识别整张试卷"
-              subtitle="AI 正在逐页分析题目，请耐心等待"
+              title="正在识别上传文件"
+              subtitle="AI 正在分析文件内容，请耐心等待"
             />
           </div>
 
@@ -322,7 +322,7 @@
                 识别出 <strong>{{ totalPdfQuestions }}</strong> 道题目
               </p>
               <div v-if="pdfResult.file_type" style="margin-top:4px">
-                <el-tag size="small">{{ pdfResult.file_type === 'pdf' ? 'PDF文件' : '图片文件' }}</el-tag>
+                <el-tag size="small">{{ pdfResult.file_type === 'markdown' ? 'Markdown 文件' : 'PDF 文件' }}</el-tag>
               </div>
             </div>
             <el-button type="primary" size="large" @click="openPdfConfirmDialog">查看并确认识别结果</el-button>
@@ -354,7 +354,7 @@
             </el-select>
           </el-form-item>
           <el-form-item label="备注">
-            <el-input v-model="addForm.notes" type="textarea" rows="2" />
+            <el-input v-model="addForm.notes" type="textarea" :rows="2" />
           </el-form-item>
         </el-form>
       </template>
@@ -1061,17 +1061,31 @@ function triggerPdfSelect() {
   pdfInputRef.value?.click()
 }
 
+function detectRecognitionFileType(file) {
+  const name = file?.name?.toLowerCase() || ''
+  if (name.endsWith('.pdf')) return 'pdf'
+  if (name.endsWith('.md') || name.endsWith('.markdown')) return 'markdown'
+  return ''
+}
+
+function validateRecognitionFile(file) {
+  const type = detectRecognitionFileType(file)
+  if (!type) {
+    ElMessage.warning('请选择 PDF 或 Markdown 文件')
+    return false
+  }
+  const maxSize = type === 'markdown' ? 10 * 1024 * 1024 : 50 * 1024 * 1024
+  if (file.size > maxSize) {
+    ElMessage.warning(type === 'markdown' ? 'Markdown 文件不能超过 10MB' : 'PDF 文件不能超过 50MB')
+    return false
+  }
+  return true
+}
+
 function onPdfFileSelected(e) {
   const file = e.target.files?.[0]
   if (!file) return
-  if (file.type !== 'application/pdf' && !file.name.toLowerCase().endsWith('.pdf')) {
-    ElMessage.warning('请选择 PDF 文件')
-    return
-  }
-  if (file.size > 50 * 1024 * 1024) {
-    ElMessage.warning('PDF 文件不能超过 50MB')
-    return
-  }
+  if (!validateRecognitionFile(file)) return
   pdfFile.value = file
   pdfResult.value = null
   // Reset input so same file can be re-selected
@@ -1081,14 +1095,7 @@ function onPdfFileSelected(e) {
 function onDropPdf(e) {
   const file = e.dataTransfer?.files?.[0]
   if (!file) return
-  if (file.type !== 'application/pdf' && !file.name.toLowerCase().endsWith('.pdf')) {
-    ElMessage.warning('请拖拽 PDF 文件')
-    return
-  }
-  if (file.size > 50 * 1024 * 1024) {
-    ElMessage.warning('PDF 文件不能超过 50MB')
-    return
-  }
+  if (!validateRecognitionFile(file)) return
   pdfFile.value = file
   pdfResult.value = null
 }
@@ -1109,7 +1116,7 @@ async function startPdfRecognition() {
 
   const formData = new FormData()
   formData.append('file', pdfFile.value)
-  formData.append('use_markdown', 'false')  // 使用视觉模型识别（推荐，准确率高）
+  formData.append('use_markdown', 'true')
   formData.append('match_question_bank', 'true')
   formData.append('remove_correction_marks', 'true')
 
@@ -1132,7 +1139,7 @@ async function startPdfRecognition() {
     if (detail) {
       ElMessage.error(detail)
     } else {
-      ElMessage.error('PDF 识别请求失败，请重试')
+      ElMessage.error('文件识别请求失败，请重试')
     }
     pdfRecognizing.value = false
     pdfProgress.value = { current_page: 0, total_pages: 0, questions_found: 0, message: '' }
@@ -1164,9 +1171,9 @@ function startProgressPolling() {
             const fullResult = await getRecognitionTask(pdfTaskId.value)
             pdfResult.value = fullResult
             if (!fullResult.pages?.length || !fullResult.pages.some(p => p.questions?.length)) {
-              ElMessage.warning('未能从 PDF 中识别出题目，请确认 PDF 清晰可读')
+              ElMessage.warning('未能从上传文件中识别出题目，请确认文件内容清晰可读')
             } else {
-              ElMessage.success(`识别完成，共 ${fullResult.page_count} 页 ${totalPdfQuestions.value} 道题`)
+              ElMessage.success(`识别完成，共 ${fullResult.page_count} 页，${totalPdfQuestions.value} 道题`)
             }
           } catch (e) {
             ElMessage.error('获取识别结果失败')

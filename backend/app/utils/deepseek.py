@@ -11,6 +11,7 @@ Recognition uses a two-stage approach for better accuracy:
 2. Recognition stage: Extract content and solve each question
 """
 import json
+import base64
 import re
 import logging
 import io
@@ -20,6 +21,7 @@ import math
 import httpx
 from typing import List, Tuple
 from PIL import Image
+from rapidocr_onnxruntime import RapidOCR
 
 from ..config import (
     DEEPSEEK_API_KEY, DEEPSEEK_API_URL, DEEPSEEK_MODEL,
@@ -27,6 +29,7 @@ from ..config import (
     VISION_API_KEY, VISION_API_URL, VISION_MODEL,
     TEXT_LLM_PROVIDER,
 )
+from .image_enhancement import analyze_image_quality, enhance_image, should_enhance
 from .recognition_config import (
     RecognitionStrategy, select_strategy,
     MIN_CONFIDENCE_THRESHOLD, MAX_PARALLEL_RECOGNITIONS,
@@ -42,6 +45,7 @@ def _make_async_client(timeout: float = 120.0) -> httpx.AsyncClient:
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(name)s] %(levelname)s: %(message)s')
 logger = logging.getLogger(__name__)
+_rapid_ocr_engine = None
 
 def _get_text_llm_config() -> dict:
     """Get text LLM config based on TEXT_LLM_PROVIDER."""
@@ -65,6 +69,7 @@ async def _call_text_llm(
     system_prompt: str = "",
     max_tokens: int = 4096,
     timeout: float = 180.0,
+    json_output: bool = False,
 ) -> str:
     """Unified text LLM caller — supports DeepSeek and Doubao."""
     config = _get_text_llm_config()
@@ -82,6 +87,8 @@ async def _call_text_llm(
     # Zhipu glm models don't support max_tokens; others do
     if not config["model"].startswith("glm-"):
         payload["max_tokens"] = max_tokens
+    elif json_output:
+        payload["response_format"] = {"type": "json_object"}
 
     async with _make_async_client(timeout) as client:
         resp = await client.post(
@@ -110,13 +117,14 @@ async def call_text_llm(
     system_prompt: str = "",
     max_tokens: int = 4096,
     timeout: float = 180.0,
+    json_output: bool = False,
 ) -> str:
     """Public wrapper for text LLM calls.
 
     This is a public interface for calling the text LLM, used by other modules
     like pdf_to_markdown for question extraction.
     """
-    return await _call_text_llm(messages, system_prompt, max_tokens, timeout)
+    return await _call_text_llm(messages, system_prompt, max_tokens, timeout, json_output)
 
 
 async def _call_multimodal_llm(
@@ -125,6 +133,7 @@ async def _call_multimodal_llm(
     system_prompt: str = None,
     max_tokens: int = 4096,
     timeout: float = 120.0,
+    json_output: bool = False,
 ) -> str:
     """Call LLM with image input using OpenAI-compatible format.
 
@@ -170,6 +179,8 @@ async def _call_multimodal_llm(
     }
     if not model.startswith("glm-"):
         payload["max_tokens"] = max_tokens
+    elif json_output:
+        payload["response_format"] = {"type": "json_object"}
 
     async with _make_async_client(timeout) as client:
         try:
@@ -204,6 +215,26 @@ async def _call_multimodal_llm(
         logger.info(f"Vision API response length: {len(content)} chars")
 
     return content
+
+
+async def call_vision_llm(
+    image_data: str,
+    prompt: str = "",
+    system_prompt: str = None,
+    max_tokens: int = 4096,
+    timeout: float = 120.0,
+    json_output: bool = False,
+) -> str:
+    """Backward-compatible wrapper for vision calls that receive base64 image data."""
+    image_bytes = base64.b64decode(image_data)
+    return await _call_multimodal_llm(
+        image_bytes=image_bytes,
+        text_prompt=prompt,
+        system_prompt=system_prompt,
+        max_tokens=max_tokens,
+        timeout=timeout,
+        json_output=json_output,
+    )
 
 
 # Maximum image dimensions for processing
@@ -365,6 +396,59 @@ def get_image_info(image_bytes: bytes) -> dict:
         return {"width": 0, "height": 0, "likely_partial": False, "warning": None}
 
 
+def _get_rapid_ocr_engine():
+    """Lazily initialize local OCR engine for offline fallback."""
+    global _rapid_ocr_engine
+    if _rapid_ocr_engine is None:
+        _rapid_ocr_engine = RapidOCR()
+    return _rapid_ocr_engine
+
+
+def _extract_text_with_local_ocr(image_bytes: bytes) -> str:
+    """Extract text from an image using local OCR, without remote API calls."""
+    engine = _get_rapid_ocr_engine()
+    result, _ = engine(image_bytes)
+    if not result:
+        return ""
+    lines = []
+    for item in result:
+        if len(item) < 2:
+            continue
+        text = item[1].strip()
+        if text:
+            lines.append(text)
+    return "\n".join(lines).strip()
+
+
+def _looks_like_remote_auth_failure(questions: List[dict]) -> bool:
+    """Whether all recognized questions are placeholder failures from invalid API auth."""
+    if not questions:
+        return False
+    texts = [str(q.get("question_text", "")).strip() for q in questions]
+    valid_texts = [t for t in texts if t]
+    if not valid_texts:
+        return False
+    return all(("识别失败" in t and "Invalid token" in t) for t in valid_texts)
+
+
+def _build_local_ocr_question(text: str) -> dict:
+    """Wrap local OCR text into the standard question payload shape."""
+    return {
+        "question_no": "1",
+        "question_text": text,
+        "answer": "",
+        "solution": "",
+        "question_type": "other",
+        "difficulty": "中等",
+        "knowledge_point": "",
+        "knowledge_category": "其他",
+        "has_image": False,
+        "is_complete": len(text) >= 20,
+        "confidence": 0.55,
+        "quality_issues": ["已切换到本地OCR兜底，未生成答案和解析"],
+    }
+
+
 def encode_image(image_bytes: bytes) -> str:
     """Encode image bytes to base64."""
     import base64
@@ -389,10 +473,15 @@ def _fix_latex_json_escapes(text: str) -> str:
     - \\u is a JSON Unicode escape prefix, so \\underbrace, \\underline fail
     - \\b, \\f, \\n, \\r, \\t get silently converted to control chars
     """
+    # Normalize a few common OCR-misread LaTeX commands before escaping.
+    text = re.sub(r'\\+1rac', r'\\\\frac', text)
+
     # Crucial: \\u not followed by 4 hex digits is LaTeX, not a JSON Unicode escape
     text = re.sub(r'\\u(?![\da-fA-F]{4})', r'\\\\u', text)
     # \\b \\f \\n \\r \\t followed by a letter = LaTeX command, not JSON escape
     text = re.sub(r'\\([bfnrt])(?=[a-zA-Z])', r'\\\\\\1', text)
+    # Any other unsupported JSON backslash escape is likely OCR/LaTeX noise
+    text = re.sub(r'\\(?!["\\/bfnrtu])', r'\\\\', text)
     return text
 
 
@@ -643,6 +732,7 @@ async def _detect_questions(image_bytes: bytes, filename: str) -> dict:
             system_prompt=DETECTION_SYSTEM_PROMPT,
             max_tokens=2048,
             timeout=60.0,
+            json_output=True,
         )
         logger.info(f"Detection API response length: {len(content_text)}")
 
@@ -727,6 +817,7 @@ async def _recognize_single_question(
             system_prompt=RECOGNITION_SYSTEM_PROMPT,
             max_tokens=4096,
             timeout=90.0,
+            json_output=True,
         )
         logger.info(f"Recognition API response for Q{question_no}: {len(content_text)} chars")
 
@@ -864,6 +955,7 @@ async def _call_vision_api_fallback(image_bytes: bytes, filename: str) -> List[d
                 system_prompt=full_page_prompt,
                 max_tokens=4096,
                 timeout=120.0,
+                json_output=True,
             )
             logger.info(f"Fallback API response length: {len(content_text)}")
             if not content_text:
@@ -906,6 +998,7 @@ async def _call_deepseek_text(text: str) -> List[dict]:
         system_prompt=system_prompt,
         max_tokens=4096,
         timeout=180.0,
+        json_output=True,
     )
 
     logger.info(f"Text LLM response text length: {len(content_text)}")
@@ -944,8 +1037,6 @@ async def recognize_questions(
     - TWO_STAGE: Detect questions first, then recognize each (better accuracy)
     - SINGLE_STAGE: Direct full-image recognition (faster)
     """
-    from .image_enhancement import analyze_image_quality, enhance_image, should_enhance
-
     # Analyze image quality
     quality_info = analyze_image_quality(image_bytes)
     warnings = quality_info.get("warnings", [])
@@ -1019,9 +1110,27 @@ async def recognize_questions(
                 raise RuntimeError(f"识别失败: {str(ocr_error)}")
 
     # Post-processing: auto-generate answers/solutions for questions missing them
+    if _looks_like_remote_auth_failure(questions or []):
+        logger.warning("Remote vision/text API token appears invalid, switching to local OCR fallback")
+        try:
+            local_ocr_text = _extract_text_with_local_ocr(image_bytes)
+            if local_ocr_text:
+                questions = [_build_local_ocr_question(local_ocr_text)]
+                warnings = list(warnings) + ["远端识别服务鉴权失败，已自动切换到本地OCR模式"]
+            else:
+                warnings = list(warnings) + ["远端识别服务鉴权失败，且本地OCR未提取到文本"]
+        except Exception as local_ocr_error:
+            logger.error(f"Local OCR fallback failed: {local_ocr_error}", exc_info=True)
+            warnings = list(warnings) + [f"远端识别服务鉴权失败，本地OCR兜底也失败: {local_ocr_error}"]
+
     if questions:
+        using_local_ocr_fallback = any(
+            "本地OCR兜底" in issue
+            for q in questions
+            for issue in q.get("quality_issues", [])
+        )
         missing_count = sum(1 for q in questions if not q.get("answer") or not q.get("solution"))
-        if missing_count > 0:
+        if missing_count > 0 and not using_local_ocr_fallback:
             logger.info(f"{missing_count}/{len(questions)} questions missing answer/solution, auto-generating...")
             questions = await _fill_missing_answers(questions)
 
@@ -1102,6 +1211,7 @@ async def analyze_page_structure(image_bytes: bytes, filename: str = "") -> dict
             system_prompt=CORRECTED_PAPER_SYSTEM_PROMPT,
             max_tokens=4096,
             timeout=120.0,
+            json_output=True,
         )
     except Exception as e:
         logger.error(f"Page analysis API error: {e}")
@@ -1137,6 +1247,7 @@ async def recognize_single_question(image_bytes: bytes, question_no: str = "") -
             system_prompt=SINGLE_QUESTION_PROMPT,
             max_tokens=4096,
             timeout=120.0,
+            json_output=True,
         )
     except Exception as e:
         logger.error(f"Single question API error: {e}")
@@ -1201,6 +1312,7 @@ async def match_question_candidates(recognized_text: str, keywords: list,
             system_prompt="你是一个数学题库匹配助手。输出严格的 JSON，不要 markdown 包裹。",
             max_tokens=1024,
             timeout=30.0,
+            json_output=True,
         )
 
         import re
@@ -1241,6 +1353,7 @@ async def generate_answer(question_text: str, question_type: str = "", knowledge
             system_prompt="你是一位资深小学数学老师，擅长解答小学数学题。输出严格的 JSON，不要 markdown 包裹。",
             max_tokens=4096,
             timeout=60.0,
+            json_output=True,
         )
 
         if not content:

@@ -356,6 +356,8 @@ class RecognizeAdvancedRequest(BaseModel):
 
 class AiResultOut(BaseModel):
     question_text: str = ""
+    answer: str = ""
+    solution: str = ""
     question_type: str = ""
     knowledge_points: List[str] = []
     difficulty: str = ""
@@ -383,6 +385,8 @@ class RecognitionBlockOut(BaseModel):
     crop_image_url: str = ""
     clean_crop_image_url: str = ""
     ai_result: Optional[AiResultOut] = None
+    ai_answer: str = ""
+    ai_solution: str = ""
     matched_questions: List[MatchedQuestionOut] = []
     suggested_action: str = "need_confirm"
     need_manual_confirm: bool = True

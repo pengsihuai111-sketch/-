@@ -5,14 +5,16 @@ import difflib
 import json
 import asyncio
 import numpy as np
+import fitz
 from io import BytesIO
 from threading import Lock
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query, Form, BackgroundTasks
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 from typing import List, Optional
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from PIL import Image
+from pydantic import BaseModel
 
 from ..database import get_db, SessionLocal
 from ..models import (
@@ -54,6 +56,10 @@ def convert_numpy_types(obj):
         return float(obj)
     elif isinstance(obj, np.ndarray):
         return obj.tolist()
+    elif isinstance(obj, BaseModel):
+        return {key: convert_numpy_types(value) for key, value in obj.model_dump().items()}
+    elif isinstance(obj, (date, datetime)):
+        return obj.isoformat()
     elif isinstance(obj, dict):
         return {key: convert_numpy_types(value) for key, value in obj.items()}
     elif isinstance(obj, (list, tuple)):
@@ -84,8 +90,15 @@ class ProgressStore:
 
     def update(self, task_id: int, **kwargs):
         with self._lock:
-            if task_id in self._store:
-                self._store[task_id].update(kwargs)
+            if task_id not in self._store:
+                self._store[task_id] = {
+                    "status": "pending",
+                    "current_page": 0,
+                    "total_pages": 0,
+                    "questions_found": 0,
+                    "message": "",
+                }
+            self._store[task_id].update(kwargs)
 
     def get(self, task_id: int) -> dict | None:
         with self._lock:
@@ -1132,292 +1145,473 @@ async def _run_pdf_recognition_background(
         db.close()
 
 
+def _detect_uploaded_document_type(file: UploadFile) -> Optional[str]:
+    content_type = (file.content_type or "").lower()
+    filename = (file.filename or "").lower()
+
+    if content_type == "application/pdf" or filename.endswith(".pdf"):
+        return "pdf"
+
+    if filename.endswith(".md") or filename.endswith(".markdown"):
+        return "markdown"
+
+    if content_type in {"text/markdown", "text/x-markdown"}:
+        return "markdown"
+
+    return None
+
+
+def _decode_markdown_file(file_bytes: bytes) -> str:
+    for encoding in ("utf-8-sig", "utf-8", "gb18030"):
+        try:
+            return file_bytes.decode(encoding)
+        except UnicodeDecodeError:
+            continue
+    raise HTTPException(status_code=400, detail="Markdown 文件编码无法识别，请使用 UTF-8 或 GB18030 编码")
+
+
+def _normalize_page_count(questions: List[dict], default: int = 1) -> int:
+    page_numbers = []
+    for question in questions:
+        try:
+            page_numbers.append(int(question.get("page_no") or default))
+        except (TypeError, ValueError):
+            page_numbers.append(default)
+    return max(page_numbers, default=default)
+
+
+def _normalize_confidence(confidence) -> int:
+    try:
+        value = float(confidence)
+    except (TypeError, ValueError):
+        return 90
+
+    if value <= 1:
+        value *= 100
+    return max(0, min(int(value), 100))
+
+
+def _create_completed_file_recognition_task(
+    db: Session,
+    *,
+    user_id: int,
+    file_type: str,
+    recognition_mode: str,
+    page_count: int,
+    questions: List[dict],
+) -> WrongQuestionRecognitionTask:
+    task = WrongQuestionRecognitionTask(
+        user_id=user_id,
+        file_url="",
+        file_type=file_type,
+        recognition_mode=recognition_mode,
+        status="need_confirm",
+        page_count=page_count,
+        raw_result=json.dumps(questions, ensure_ascii=False),
+    )
+    db.add(task)
+    db.flush()
+
+    for index, question in enumerate(questions, start=1):
+        image_urls = question.get("image_urls") or []
+        knowledge_points = question.get("knowledge_points") or []
+        if not knowledge_points and question.get("knowledge_point"):
+            knowledge_points = [question.get("knowledge_point")]
+
+        block = WrongQuestionRecognitionBlock(
+            task_id=task.id,
+            page_no=int(question.get("page_no") or 1),
+            question_no=str(question.get("question_no") or index),
+            ai_question_text=question.get("question_text", ""),
+            ai_answer=question.get("answer", ""),
+            ai_solution=question.get("solution", ""),
+            ai_question_type=question.get("question_type", ""),
+            ai_knowledge_points=json.dumps(knowledge_points, ensure_ascii=False),
+            ai_difficulty=question.get("difficulty", "中等"),
+            ai_confidence=_normalize_confidence(question.get("confidence", 0.9)),
+            question_image_urls=json.dumps(image_urls, ensure_ascii=False) if image_urls else None,
+            status="need_confirm",
+        )
+        db.add(block)
+
+    db.commit()
+    return task
+
+
+def _create_pending_file_recognition_task(
+    db: Session,
+    *,
+    user_id: int,
+    file_type: str,
+    recognition_mode: str,
+    page_count: int,
+) -> WrongQuestionRecognitionTask:
+    task = WrongQuestionRecognitionTask(
+        user_id=user_id,
+        file_url="",
+        file_type=file_type,
+        recognition_mode=recognition_mode,
+        status="pending",
+        page_count=page_count,
+        raw_result=None,
+    )
+    db.add(task)
+    db.commit()
+    db.refresh(task)
+    return task
+
+
+def _save_questions_to_existing_task(
+    db: Session,
+    *,
+    task_id: int,
+    recognition_mode: str,
+    questions: List[dict],
+) -> None:
+    task = db.query(WrongQuestionRecognitionTask).filter(
+        WrongQuestionRecognitionTask.id == task_id
+    ).first()
+    if not task:
+        raise ValueError(f"Recognition task {task_id} not found")
+
+    db.query(WrongQuestionRecognitionBlock).filter(
+        WrongQuestionRecognitionBlock.task_id == task_id
+    ).delete()
+
+    for index, question in enumerate(questions, start=1):
+        image_urls = question.get("image_urls") or []
+        knowledge_points = question.get("knowledge_points") or []
+        if not knowledge_points and question.get("knowledge_point"):
+            knowledge_points = [question.get("knowledge_point")]
+
+        block = WrongQuestionRecognitionBlock(
+            task_id=task_id,
+            page_no=int(question.get("page_no") or 1),
+            question_no=str(question.get("question_no") or index),
+            ai_question_text=question.get("question_text", ""),
+            ai_answer=question.get("answer", ""),
+            ai_solution=question.get("solution", ""),
+            ai_question_type=question.get("question_type", ""),
+            ai_knowledge_points=json.dumps(knowledge_points, ensure_ascii=False),
+            ai_difficulty=question.get("difficulty", "中等"),
+            ai_confidence=_normalize_confidence(question.get("confidence", 0.9)),
+            question_image_urls=json.dumps(image_urls, ensure_ascii=False) if image_urls else None,
+            status="need_confirm",
+        )
+        db.add(block)
+
+    task.status = "need_confirm"
+    task.recognition_mode = recognition_mode
+    task.page_count = _normalize_page_count(questions, default=1)
+    task.raw_result = json.dumps(questions, ensure_ascii=False)
+    db.commit()
+
+
+async def _fill_missing_answers_for_questions(questions: List[dict]) -> List[dict]:
+    if not questions:
+        return questions
+
+    from ..utils.deepseek import generate_answer
+
+    semaphore = asyncio.Semaphore(3)
+
+    async def fill_one(question: dict) -> None:
+        if question.get("answer") and question.get("solution"):
+            return
+        text = (question.get("question_text") or "").strip()
+        if not text:
+            return
+        async with semaphore:
+            result = await generate_answer(
+                text,
+                question.get("question_type", ""),
+                question.get("knowledge_point", ""),
+            )
+        if not question.get("answer") and result.get("answer"):
+            question["answer"] = result["answer"]
+        if not question.get("solution") and result.get("solution"):
+            question["solution"] = result["solution"]
+
+    await asyncio.gather(*(fill_one(question) for question in questions))
+    return questions
+
+
+async def _run_file_recognition_background(
+    *,
+    task_id: int,
+    user_id: int,
+    file_bytes: bytes,
+    file_type: str,
+    use_markdown: bool,
+):
+    db = SessionLocal()
+    try:
+        task = db.query(WrongQuestionRecognitionTask).filter(
+            WrongQuestionRecognitionTask.id == task_id
+        ).first()
+        total_pages = max(1, int(task.page_count or 1)) if task else 1
+
+        progress_store.update(
+            task_id,
+            status="pending",
+            current_page=0,
+            total_pages=total_pages,
+            questions_found=0,
+            message="正在准备识别...",
+        )
+
+        if file_type == "markdown":
+            progress_store.update(
+                task_id,
+                current_page=1,
+                total_pages=1,
+                message="正在解析 Markdown 文件...",
+            )
+            markdown_text = _decode_markdown_file(file_bytes).strip()
+            if not markdown_text:
+                raise ValueError("Markdown 文件内容为空")
+
+            from ..utils.deepseek import call_text_llm
+
+            questions = await extract_questions_from_markdown(
+                markdown_text,
+                call_text_llm,
+                pdf_images=None,
+            )
+            if not questions:
+                raise ValueError("未能从 Markdown 中识别出题目")
+
+            progress_store.update(
+                task_id,
+                questions_found=len(questions),
+                message=f"已识别 {len(questions)} 道题，正在补全答案与解析...",
+            )
+            await _fill_missing_answers_for_questions(questions)
+
+            progress_store.update(
+                task_id,
+                current_page=1,
+                total_pages=1,
+                questions_found=len(questions),
+                message=f"识别完成，共 {len(questions)} 道题",
+            )
+            _save_questions_to_existing_task(
+                db,
+                task_id=task_id,
+                recognition_mode="markdown_file",
+                questions=questions,
+            )
+            progress_store.update(task_id, status="need_confirm")
+            return
+
+        progress_store.update(task_id, message="正在读取 PDF 文件...")
+
+        if use_markdown:
+            try:
+                def markdown_progress_callback(current_page: int, total: int, message: str) -> None:
+                    progress_store.update(
+                        task_id,
+                        current_page=current_page,
+                        total_pages=total,
+                        message=message,
+                    )
+
+                markdown_text, used_ocr = pdf_to_markdown(
+                    file_bytes,
+                    max_pages=30,
+                    use_ocr_fallback=True,
+                    progress_callback=markdown_progress_callback,
+                )
+                if len(markdown_text.strip()) < 50:
+                    raise ValueError("PDF 文本内容不足，正在切换视觉识别...")
+
+                from ..utils.deepseek import call_text_llm
+
+                progress_store.update(
+                    task_id,
+                    current_page=total_pages,
+                    total_pages=total_pages,
+                    message="正在提取题目并补全答案...",
+                )
+                questions = await extract_questions_from_markdown(
+                    markdown_text,
+                    call_text_llm,
+                    pdf_images=None,
+                )
+                if not questions:
+                    raise ValueError("未能从 PDF 文本中提取出题目，正在切换视觉识别...")
+
+                progress_store.update(
+                    task_id,
+                    current_page=total_pages,
+                    total_pages=total_pages,
+                    questions_found=len(questions),
+                    message=f"已识别 {len(questions)} 道题，正在补全答案与解析...",
+                )
+                await _fill_missing_answers_for_questions(questions)
+                _save_questions_to_existing_task(
+                    db,
+                    task_id=task_id,
+                    recognition_mode="markdown_ocr" if used_ocr else "markdown",
+                    questions=questions,
+                )
+                progress_store.update(
+                    task_id,
+                    status="need_confirm",
+                    current_page=_normalize_page_count(questions, default=total_pages),
+                    total_pages=_normalize_page_count(questions, default=total_pages),
+                    questions_found=len(questions),
+                    message=f"识别完成，共 {len(questions)} 道题",
+                )
+                return
+            except Exception as exc:
+                logger.warning(
+                    "Markdown PDF recognition failed, fallback to vision: %s",
+                    exc,
+                )
+                progress_store.update(
+                    task_id,
+                    current_page=0,
+                    total_pages=total_pages,
+                    questions_found=0,
+                    message=f"{str(exc)} 正在切换视觉识别...",
+                )
+
+        from ..utils.pdf_vision_recognition import recognize_pdf_with_vision
+
+        def progress_callback(message: str):
+            current = progress_store.get(task_id) or {}
+            progress_store.update(
+                task_id,
+                current_page=current.get("current_page", 0) or 0,
+                total_pages=current.get("total_pages", total_pages),
+                questions_found=current.get("questions_found", 0),
+                message=message,
+            )
+
+        questions = await recognize_pdf_with_vision(file_bytes, progress_callback=progress_callback, dpi=200)
+        if not questions:
+            raise ValueError("未能从 PDF 中识别出题目")
+
+        progress_store.update(
+            task_id,
+            questions_found=len(questions),
+            message=f"已识别 {len(questions)} 道题，正在补全答案与解析...",
+        )
+        await _fill_missing_answers_for_questions(questions)
+        _save_questions_to_existing_task(
+            db,
+            task_id=task_id,
+            recognition_mode="vision",
+            questions=questions,
+        )
+        page_count = _normalize_page_count(questions, default=1)
+        progress_store.update(
+            task_id,
+            status="need_confirm",
+            current_page=page_count,
+            total_pages=page_count,
+            questions_found=len(questions),
+            message=f"识别完成，共 {len(questions)} 道题",
+        )
+    except Exception as e:
+        logger.error(f"Background file recognition task {task_id} failed: {e}", exc_info=True)
+        task = db.query(WrongQuestionRecognitionTask).filter(
+            WrongQuestionRecognitionTask.id == task_id
+        ).first()
+        if task:
+            task.status = "failed"
+            task.raw_result = json.dumps({"error": str(e)}, ensure_ascii=False)
+            db.commit()
+        progress_store.update(
+            task_id,
+            status="failed",
+            message=str(e),
+        )
+    finally:
+        db.close()
+
+
 @router.post("/recognize-pdf")
 async def recognize_pdf_async(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
-    use_markdown: bool = Form(False),  # Changed default to False (use vision model)
+    use_markdown: bool = Form(True),
     recognition_mode: str = Form("auto"),
     remove_correction_marks: bool = Form(True),
     match_question_bank: bool = Form(True),
     user_id: int = Depends(get_current_user_id),
     db: Session = Depends(get_db),
 ):
-    """上传 PDF 进行异步整卷识别。
+    """上传文件并创建异步识别任务。"""
+    del recognition_mode, remove_correction_marks, match_question_bank
 
-    Args:
-        use_markdown: 是否使用Markdown方式（不推荐）。
-                     False (默认): PDF→图片→视觉模型识别（推荐，准确率高）
-                     True: PDF→文本→LLM提取（仅适合纯文本PDF）
-
-    返回 task_id，前端轮询 GET /recognition-tasks/{task_id}/progress 获取进度。
-    识别完成后调用 GET /recognition-tasks/{task_id} 获取完整结果。
-    """
     ensure_dirs()
 
-    is_pdf = file.content_type == "application/pdf" or (
-        file.content_type == "application/octet-stream"
-        and file.filename
-        and file.filename.lower().endswith(".pdf")
-    )
-    if not is_pdf:
-        raise HTTPException(status_code=400, detail="仅支持 PDF 文件")
+    file_type = _detect_uploaded_document_type(file)
+    if not file_type:
+        raise HTTPException(status_code=400, detail="仅支持 PDF、.md 和 .markdown 文件")
 
-    pdf_bytes = await file.read()
-    if len(pdf_bytes) > 50 * 1024 * 1024:
-        raise HTTPException(status_code=400, detail="PDF 大小不能超过 50MB")
+    file_bytes = await file.read()
+    if not file_bytes:
+        raise HTTPException(status_code=400, detail="上传文件为空")
 
-    # Save PDF to temp file for processing
-    temp_pdf_path = os.path.join(UPLOAD_DIR, "temp", f"pdf_{uuid.uuid4().hex[:12]}.pdf")
-    os.makedirs(os.path.dirname(temp_pdf_path), exist_ok=True)
-    with open(temp_pdf_path, "wb") as f:
-        f.write(pdf_bytes)
+    if file_type == "markdown":
+        if len(file_bytes) > 10 * 1024 * 1024:
+            raise HTTPException(status_code=400, detail="Markdown 文件不能超过 10MB")
 
-    # Default: Vision-based recognition (recommended)
-    if not use_markdown:
-        logger.info("Using vision-based recognition for PDF (recommended)")
-        try:
-            from ..utils.pdf_vision_recognition import recognize_pdf_with_vision
+        markdown_text = _decode_markdown_file(file_bytes).strip()
+        if not markdown_text:
+            raise HTTPException(status_code=400, detail="Markdown 文件内容为空")
 
-            # Recognize PDF using vision model
-            def progress_update(msg: str):
-                progress_store.update(task_id, message=msg)
-
-            questions = await recognize_pdf_with_vision(
-                pdf_bytes,
-                progress_callback=progress_update,
-                dpi=200
-            )
-            logger.info(f"Vision recognition extracted {len(questions)} questions")
-
-            if not questions:
-                raise ValueError("未能从PDF中识别出题目")
-
-            # Create task
-            task = WrongQuestionRecognitionTask(
-                user_id=user_id,
-                file_url="",
-                file_type="pdf",
-                recognition_mode="vision",
-                status="completed",
-                page_count=len(set(q.get("page_no", 1) for q in questions)),
-                raw_result=json.dumps(questions, ensure_ascii=False),
-            )
-            db.add(task)
-            db.flush()
-            task_id = task.id
-
-            # Create blocks for each question
-            for i, q in enumerate(questions):
-                block = WrongQuestionRecognitionBlock(
-                    task_id=task_id,
-                    page_no=q.get("page_no", 1),
-                    question_no=q.get("question_no", str(i + 1)),
-                    ai_question_text=q.get("question_text", ""),
-                    ai_answer=q.get("answer", ""),
-                    ai_solution=q.get("solution", ""),
-                    ai_question_type=q.get("question_type", ""),
-                    ai_knowledge_points=json.dumps([q.get("knowledge_point", "")], ensure_ascii=False),
-                    ai_difficulty=q.get("difficulty", "中等"),
-                    ai_confidence=int(q.get("confidence", 0.9) * 100),
-                    status="need_confirm",
-                )
-                db.add(block)
-
-            db.commit()
-
-            # Clean up temp file
-            try:
-                os.remove(temp_pdf_path)
-            except:
-                pass
-
-            logger.info(f"PDF vision task {task_id} completed: {len(questions)} questions")
-            return {
-                "task_id": task_id,
-                "status": "completed",
-                "file_type": "pdf",
-                "page_count": task.page_count,
-                "questions_found": len(questions),
-                "message": f"识别完成，共识别出 {len(questions)} 道题目（使用视觉模型）",
-            }
-
-        except HTTPException:
-            raise
-        except Exception as e:
-            logger.error(f"Vision PDF recognition failed: {e}", exc_info=True)
-            db.rollback()
-            # Clean up temp file
-            try:
-                os.remove(temp_pdf_path)
-            except:
-                pass
-            raise HTTPException(
-                status_code=500,
-                detail=f"PDF识别失败：{str(e)}。请检查PDF格式或稍后重试。"
-            )
-
-    # Method 2: Markdown-based extraction (legacy, not recommended)
-    if use_markdown:
-        try:
-            # Convert PDF to markdown (with OCR fallback for scanned PDFs)
-            logger.info("Starting PDF to markdown conversion...")
-            markdown_text, used_ocr = pdf_to_markdown(pdf_bytes, max_pages=30, use_ocr_fallback=True)
-            logger.info(f"PDF converted to markdown: {len(markdown_text)} chars (OCR: {used_ocr})")
-
-            # Check if PDF has extractable text
-            if len(markdown_text.strip()) < 50:
-                logger.warning("PDF has insufficient extractable text, falling back to image recognition")
-                raise ValueError("PDF文本内容不足，切换到图片识别方式")
-
-            # Extract questions using LLM (no image extraction, pure markdown mode)
-            logger.info("Extracting questions from markdown using LLM...")
-            from ..utils.deepseek import call_text_llm
-            questions = await extract_questions_from_markdown(markdown_text, call_text_llm, pdf_images=None)
-            logger.info(f"Extracted {len(questions)} questions from markdown")
-
-            if not questions:
-                logger.warning("No questions extracted from markdown, falling back to image recognition")
-                raise ValueError("未能从文本中提取题目，切换到图片识别方式")
-
-            # Create task
-            task = WrongQuestionRecognitionTask(
-                user_id=user_id,
-                file_url="",  # No thumbnail for markdown mode
-                file_type="pdf",
-                recognition_mode="markdown_ocr" if used_ocr else "markdown",
-                status="completed",
-                page_count=1,
-                raw_result=json.dumps(questions, ensure_ascii=False),
-            )
-            db.add(task)
-            db.flush()
-            task_id = task.id
-
-            # Create blocks for each question
-            for i, q in enumerate(questions):
-                # Save image URLs as JSON if present
-                image_urls_json = json.dumps(q.get("image_urls", []), ensure_ascii=False) if q.get("image_urls") else None
-
-                block = WrongQuestionRecognitionBlock(
-                    task_id=task_id,
-                    page_no=1,
-                    question_no=str(i + 1),
-                    ai_question_text=q.get("question_text", ""),
-                    ai_answer=q.get("answer", ""),
-                    ai_solution=q.get("solution", ""),
-                    ai_question_type=q.get("question_type", ""),
-                    ai_knowledge_points=json.dumps([q.get("knowledge_point", "")], ensure_ascii=False),
-                    ai_difficulty=q.get("difficulty", "中等"),
-                    ai_confidence=90,
-                    question_image_urls=image_urls_json,
-                    status="need_confirm",
-                )
-                db.add(block)
-
-            db.commit()
-
-            logger.info(f"PDF markdown task {task_id} completed: {len(questions)} questions (OCR: {used_ocr})")
-            return {
-                "task_id": task_id,
-                "status": "completed",
-                "file_type": "pdf",
-                "page_count": 1,
-                "questions_found": len(questions),
-                "message": f"识别完成，共识别出 {len(questions)} 道题目" + (" (使用OCR)" if used_ocr else ""),
-            }
-
-        except HTTPException:
-            raise
-        except ValueError as e:
-            # PDF is scanned or has no extractable text - return error instead of fallback
-            logger.warning(f"Markdown extraction failed: {e}")
-            db.rollback()
-            error_msg = str(e)
-            if "OCR" in error_msg or "tesseract" in error_msg.lower():
-                detail = "PDF是扫描件，需要OCR识别但OCR功能未安装。建议：1) 使用截图识别功能对单个题目进行识别；2) 或联系管理员安装Tesseract OCR以支持扫描版PDF识别。"
-            else:
-                detail = f"PDF识别失败：{error_msg}。建议使用截图识别功能对单个题目进行识别。"
-            raise HTTPException(
-                status_code=400,
-                detail=detail
-            )
-        except Exception as e:
-            logger.error(f"Markdown PDF recognition failed: {e}", exc_info=True)
-            db.rollback()
-            raise HTTPException(
-                status_code=500,
-                detail=f"PDF识别失败：{str(e)}。请检查PDF格式或使用截图识别功能。"
-            )
-
-    # Method 2: Image-based recognition (only when use_markdown=False)
-    if not use_markdown:
-        logger.info("Using image-based recognition for PDF (user explicitly requested)")
-        try:
-            page_images = pdf_to_images(pdf_bytes)
-        except Exception as e:
-            raise HTTPException(status_code=400, detail=f"PDF 处理失败: {str(e)}")
-
-        total_pages = len(page_images)
-        if total_pages == 0:
-            raise HTTPException(status_code=400, detail="PDF 中没有页面")
-
-        # Save page images to a task-specific directory
-        task_dir_name = f"task_{uuid.uuid4().hex[:12]}"
-        task_dir = os.path.join(UPLOAD_DIR, "tasks", task_dir_name)
-        os.makedirs(task_dir, exist_ok=True)
-        page_paths = []
-        for i, img_bytes in enumerate(page_images):
-            path = os.path.join(task_dir, f"page_{i + 1}.jpg")
-            with open(path, "wb") as f:
-                f.write(img_bytes)
-            page_paths.append(path)
-
-        # Save thumbnail
-        thumb_url = save_image(page_images[0], "images", "pdf_task")
-
-        # Create task
-        task = WrongQuestionRecognitionTask(
-            user_id=user_id,
-            file_url=thumb_url,
-            file_type="pdf",
-            recognition_mode=recognition_mode,
-            status="processing",
-            page_count=total_pages,
-        )
-        db.add(task)
-        db.flush()
-        task_id = task.id
-        db.commit()
-
-        # Init progress tracking
-        progress_store.init(task_id, total_pages)
-
-        # Start background processing
-        background_tasks.add_task(
-            _run_pdf_recognition_background,
-            task_id=task_id,
-            user_id=user_id,
-            page_paths=page_paths,
-            recognition_mode=recognition_mode,
-            remove_correction_marks=remove_correction_marks,
-            match_question_bank=match_question_bank,
-        )
-
-        logger.info(f"PDF async task {task_id} started: {total_pages} pages")
-        return {
-            "task_id": task_id,
-            "status": "processing",
-            "file_type": "pdf",
-            "page_count": total_pages,
-            "message": f"识别任务已创建，共 {total_pages} 页，正在后台处理",
-        }
+        page_count = 1
+        recognition_mode_name = "markdown_file"
     else:
-        # use_markdown=True but we reached here - should not happen
-        raise HTTPException(
-            status_code=400,
-            detail="PDF Markdown识别模式已启用，但未能成功识别。请检查PDF格式。"
-        )
+        if len(file_bytes) > 50 * 1024 * 1024:
+            raise HTTPException(status_code=400, detail="PDF 文件不能超过 50MB")
+
+        try:
+            with fitz.open(stream=file_bytes, filetype="pdf") as pdf_doc:
+                page_count = max(1, min(len(pdf_doc), 30))
+        except Exception:
+            page_count = 1
+
+        recognition_mode_name = "markdown" if use_markdown else "vision"
+
+    task = _create_pending_file_recognition_task(
+        db,
+        user_id=user_id,
+        file_type=file_type,
+        recognition_mode=recognition_mode_name,
+        page_count=page_count,
+    )
+
+    progress_store.update(
+        task.id,
+        status="pending",
+        current_page=0,
+        total_pages=page_count,
+        questions_found=0,
+        message="任务已创建，正在准备识别...",
+    )
+
+    background_tasks.add_task(
+        _run_file_recognition_background,
+        task_id=task.id,
+        user_id=user_id,
+        file_bytes=file_bytes,
+        file_type=file_type,
+        use_markdown=(file_type == "markdown") or use_markdown,
+    )
+
+    return {
+        "task_id": task.id,
+        "status": "pending",
+        "file_type": file_type,
+        "page_count": page_count,
+        "questions_found": 0,
+        "message": "识别任务已创建",
+    }
 
 
 @router.get("/recognition-tasks/{task_id}/progress")
@@ -1517,12 +1711,16 @@ def get_recognition_task(
             clean_crop_image_url=b.clean_crop_image_url or "",
             ai_result=AiResultOut(
                 question_text=b.ai_question_text or "",
+                answer=b.ai_answer or "",
+                solution=b.ai_solution or "",
                 question_type=b.ai_question_type or "other",
                 knowledge_points=kps,
                 difficulty=b.ai_difficulty or "中等",
                 keywords=kws,
                 confidence=(b.ai_confidence or 0) / 100.0,
             ),
+            ai_answer=b.ai_answer or "",
+            ai_solution=b.ai_solution or "",
             matched_questions=[],
             suggested_action="need_confirm",
             need_manual_confirm=True,
