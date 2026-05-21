@@ -1338,7 +1338,8 @@ async def generate_answer(question_text: str, question_type: str = "", knowledge
         "2. 如果题目有多个小问，请在 answer 中逐项作答。\n"
         "3. 如果题目依赖配图或表格，仍要基于文字部分尽量推导，并在 answer 中说明需要结合原图。\n"
         "4. solution 用中文分步说明，适合小学学生理解。\n"
-        "5. 严格输出 JSON，不要输出 markdown 代码块。\n\n"
+        "5. 不要直接输出“无法解答”。只有题干完全缺少关键条件时，才写“条件不足”，并说明缺失条件。\n"
+        "6. 严格输出 JSON，不要输出 markdown 代码块。\n\n"
         "JSON 格式：\n"
         '{\n'
         '  "answer": "最终答案",\n'

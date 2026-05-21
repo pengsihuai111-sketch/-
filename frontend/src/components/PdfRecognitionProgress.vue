@@ -77,6 +77,10 @@ const props = defineProps({
     type: Number,
     default: 0
   },
+  progressPercent: {
+    type: Number,
+    default: null
+  },
   message: {
     type: String,
     default: ''
@@ -92,6 +96,9 @@ const props = defineProps({
 })
 
 const percentage = computed(() => {
+  if (props.progressPercent !== null && props.progressPercent !== undefined) {
+    return Math.max(0, Math.min(100, Math.round(props.progressPercent)))
+  }
   if (props.totalPages === 0) return 0
   return Math.round((props.currentPage / props.totalPages) * 100)
 })
@@ -99,6 +106,11 @@ const percentage = computed(() => {
 // 计算处理速度和预计剩余时间
 const startTime = ref(Date.now())
 const speed = computed(() => {
+  if (props.progressPercent !== null && props.progressPercent !== undefined) {
+    const elapsed = (Date.now() - startTime.value) / 1000
+    if (elapsed <= 0 || props.progressPercent <= 0) return ''
+    return `${(props.progressPercent / elapsed).toFixed(1)}%/秒`
+  }
   if (props.currentPage === 0) return ''
   const elapsed = (Date.now() - startTime.value) / 1000 // 秒
   const pagesPerSecond = props.currentPage / elapsed
@@ -107,6 +119,13 @@ const speed = computed(() => {
 })
 
 const estimatedTime = computed(() => {
+  if (props.progressPercent !== null && props.progressPercent !== undefined) {
+    if (props.progressPercent <= 0 || props.progressPercent >= 100) return ''
+    const elapsed = (Date.now() - startTime.value) / 1000
+    const remainingSeconds = Math.ceil((elapsed / props.progressPercent) * (100 - props.progressPercent))
+    if (remainingSeconds < 60) return `${remainingSeconds} 秒`
+    return `${Math.floor(remainingSeconds / 60)} 分 ${remainingSeconds % 60} 秒`
+  }
   if (props.currentPage === 0 || props.totalPages === 0) return ''
   const elapsed = (Date.now() - startTime.value) / 1000 // 秒
   const pagesPerSecond = props.currentPage / elapsed

@@ -122,6 +122,156 @@ def _normalize_text(t: str) -> str:
     return _re.sub(r'\s+', ' ', t or '').strip()
 
 
+def _is_placeholder_answer(value: str) -> bool:
+    text = _normalize_text(str(value or ""))
+    if not text:
+        return True
+    placeholder_terms = (
+        "无法解答",
+        "无法确定",
+        "无法计算",
+        "无法判断",
+        "题目信息不足",
+        "条件不足",
+        "信息不足",
+        "需结合原图",
+        "需要结合原图",
+    )
+    return any(term in text for term in placeholder_terms)
+
+
+def _pdf_markdown_text_quality(markdown_text: str) -> float:
+    text = _normalize_text(markdown_text)
+    if not text:
+        return 0.0
+
+    chinese_chars = len(_re.findall(r"[\u4e00-\u9fff]", text))
+    ascii_words = len(_re.findall(r"[A-Za-z]{2,}", text))
+    numbers = len(_re.findall(r"\d+", text))
+    punctuation_noise = len(_re.findall(r"[|@#$%^~`_=]{1,}|[A-Za-z]{1,2}\)|\b[A-Za-z]{1,2}\b", text))
+    spaced_chinese = len(_re.findall(r"[\u4e00-\u9fff]\s+[\u4e00-\u9fff]", markdown_text))
+    total_signal = chinese_chars + ascii_words + numbers
+    if total_signal == 0:
+        return 0.0
+
+    noise_ratio = min(0.75, (punctuation_noise + spaced_chinese * 0.25) / max(total_signal, 1))
+    question_hits = len(_re.findall(r"(?:第\s*\d+\s*题|\d+\s*[.、．])", markdown_text))
+    hit_bonus = min(0.25, question_hits / 40)
+    return max(0.0, min(1.0, 1.0 - noise_ratio + hit_bonus))
+
+
+def _split_answer_solution_fields(question: dict) -> None:
+    answer = str(question.get("answer") or "").strip()
+    solution = str(question.get("solution") or "").strip()
+    if not answer:
+        return
+
+    marker = _re.search(r"(?:解析|解[：:]|过程[：:]|理由[：:])", answer)
+    if marker:
+        answer_part = answer[:marker.start()].strip(" ：:；;\n")
+        solution_part = answer[marker.start():].strip()
+        if answer_part:
+            question["answer"] = answer_part
+        if solution_part and not solution:
+            question["solution"] = solution_part
+        return
+
+    if len(answer) > 80 and not solution:
+        parts = _re.split(r"[。；;]\s*", answer, maxsplit=1)
+        if len(parts) == 2 and len(parts[0]) <= 40:
+            question["answer"] = parts[0].strip()
+            question["solution"] = parts[1].strip()
+
+
+def _cleanup_recognized_questions(questions: List[dict]) -> List[dict]:
+    cleaned: List[dict] = []
+    for question in questions:
+        text = _normalize_text(str(question.get("question_text") or ""))
+        if len(text) < 8:
+            continue
+        _split_answer_solution_fields(question)
+        cleaned.append(question)
+    return cleaned
+
+
+def _safe_page_no(question: dict, default: int = 1) -> int:
+    try:
+        page_no = int(question.get("page_no") or default)
+    except (TypeError, ValueError):
+        page_no = default
+    return max(1, page_no)
+
+
+def _merge_recognition_questions(primary: List[dict], extra: List[dict]) -> List[dict]:
+    """Merge fallback recognition results without duplicating obvious repeats."""
+    merged: List[dict] = []
+    seen = set()
+
+    for question in [*(primary or []), *(extra or [])]:
+        text = _normalize_text(str(question.get("question_text") or ""))
+        if not text:
+            continue
+        question_no = str(question.get("question_no") or "").strip()
+        page_no = _safe_page_no(question)
+        key = (page_no, question_no, text[:120])
+        loose_key = (page_no, text[:80])
+        if key in seen or loose_key in seen:
+            continue
+        seen.add(key)
+        seen.add(loose_key)
+        merged.append(question)
+
+    return merged
+
+
+async def _vision_fill_missing_pdf_pages(
+    *,
+    file_bytes: bytes,
+    questions: List[dict],
+    total_pages: int,
+    progress_callback,
+    max_fallback_pages: int = 4,
+) -> List[dict]:
+    """Use vision recognition only for pages where text extraction found no question."""
+    if total_pages <= 1:
+        return questions
+
+    found_pages = {
+        _safe_page_no(question)
+        for question in questions
+        if str(question.get("question_text") or "").strip()
+    }
+    missing_pages = [page for page in range(1, total_pages + 1) if page not in found_pages]
+    if not missing_pages:
+        return questions
+
+    if len(missing_pages) > max_fallback_pages:
+        logger.warning(
+            "Skipping vision fallback for %s missing pages to avoid slow full-PDF recognition: %s",
+            len(missing_pages),
+            missing_pages,
+        )
+        return questions
+
+    from ..utils.pdf_vision_recognition import recognize_pdf_with_vision
+
+    if progress_callback:
+        progress_callback(
+            f"文本解析有 {len(missing_pages)} 页未识别到题目，正在视觉补识别这些页..."
+        )
+
+    vision_questions = await recognize_pdf_with_vision(
+        file_bytes,
+        progress_callback=progress_callback,
+        dpi=180,
+        page_numbers=set(missing_pages),
+    )
+    if not vision_questions:
+        return questions
+
+    return _merge_recognition_questions(questions, vision_questions)
+
+
 def _find_best_match(norm_text: str, db: Session):
     """在题库中查找最佳匹配，返回 (question, similarity)"""
     norm_text = _normalize_text(norm_text)
@@ -1307,46 +1457,144 @@ def _save_questions_to_existing_task(
     db.commit()
 
 
-async def _fill_missing_answers_for_questions(questions: List[dict]) -> List[dict]:
+async def _fill_missing_answers_for_questions(
+    questions: List[dict],
+    progress_callback=None,
+    use_batch: bool = True,
+) -> List[dict]:
     if not questions:
         return questions
 
     from ..utils.deepseek import generate_answer
 
-    semaphore = asyncio.Semaphore(3)
+    if use_batch:
+        await _batch_fill_missing_answers_for_questions(questions, progress_callback=progress_callback)
+
+    semaphore = asyncio.Semaphore(5)
+    fallback_questions = [
+        question
+        for question in questions
+        if str(question.get("question_text") or "").strip()
+        and (
+            _is_placeholder_answer(question.get("answer"))
+            or _is_placeholder_answer(question.get("solution"))
+        )
+    ]
+    completed = 0
 
     async def fill_one(question: dict) -> None:
+        nonlocal completed
         answer = str(question.get("answer") or "").strip()
         solution = str(question.get("solution") or "").strip()
-        if answer and solution:
-            return
         text = (question.get("question_text") or "").strip()
         if not text:
             return
 
-        result = {"answer": "", "solution": ""}
-        for attempt in range(2):
-            async with semaphore:
-                result = await generate_answer(
-                    text,
-                    question.get("question_type", ""),
-                    question.get("knowledge_point", ""),
-                )
-            if (answer or result.get("answer")) and (solution or result.get("solution")):
-                break
-            logger.warning(
-                "Answer fill attempt %s returned incomplete result for question %s",
-                attempt + 1,
-                question.get("question_no", ""),
+        async with semaphore:
+            result = await generate_answer(
+                text,
+                question.get("question_type", ""),
+                question.get("knowledge_point", ""),
             )
 
-        if not answer and result.get("answer"):
+        if _is_placeholder_answer(answer) and not _is_placeholder_answer(result.get("answer")):
             question["answer"] = result["answer"]
-        if not solution and result.get("solution"):
+        if _is_placeholder_answer(solution) and not _is_placeholder_answer(result.get("solution")):
             question["solution"] = result["solution"]
+        completed += 1
+        if progress_callback:
+            progress_callback(completed, len(fallback_questions), "single")
 
-    await asyncio.gather(*(fill_one(question) for question in questions))
+    await asyncio.gather(*(fill_one(question) for question in fallback_questions))
     return questions
+
+
+async def _batch_fill_missing_answers_for_questions(questions: List[dict], progress_callback=None) -> None:
+    missing = [
+        question
+        for question in questions
+        if (_is_placeholder_answer(question.get("answer"))
+            or _is_placeholder_answer(question.get("solution")))
+        and str(question.get("question_text") or "").strip()
+    ]
+    if not missing:
+        return
+
+    from ..utils.deepseek import call_text_llm, _fix_latex_json_escapes
+
+    batch_size = 8
+    for start in range(0, len(missing), batch_size):
+        batch = missing[start:start + batch_size]
+        payload = [
+            {
+                "qid": f"q{start + index}",
+                "question_no": question.get("question_no", ""),
+                "question_text": question.get("question_text", ""),
+                "question_type": question.get("question_type", ""),
+                "knowledge_point": question.get("knowledge_point", ""),
+            }
+            for index, question in enumerate(batch)
+        ]
+        prompt = (
+            "请为下面的小学数学题批量生成答案和解析。只输出严格 JSON，不要 markdown。\n"
+            "即使题目来自 OCR 或 PDF 文本，也要尽量根据题干计算；不要直接输出“无法解答”。\n"
+            "只有题干完全缺失关键条件时，才在 answer 中写“条件不足”，并在 solution 说明缺失条件。\n"
+            "必须逐项原样返回输入中的 qid，不能调换题目顺序，也不能把一道题的答案写到另一道题。\n"
+            "返回格式：{\"questions\":[{\"qid\":\"q0\",\"answer\":\"...\",\"solution\":\"...\"}]}\n\n"
+            f"{json.dumps(payload, ensure_ascii=False)}"
+        )
+
+        try:
+            content = await call_text_llm(
+                messages=[{"role": "user", "content": prompt}],
+                system_prompt="你是一位严谨的小学数学老师。只输出严格 JSON。",
+                max_tokens=8192,
+                timeout=120.0,
+                json_output=True,
+            )
+            content = (content or "").strip()
+            if content.startswith("```"):
+                match = _re.search(r"```(?:json)?\s*([\s\S]*?)```", content)
+                if match:
+                    content = match.group(1).strip()
+            try:
+                parsed = json.loads(_fix_latex_json_escapes(content))
+            except json.JSONDecodeError:
+                match = _re.search(r"\{[\s\S]*\}", content)
+                if not match:
+                    raise
+                parsed = json.loads(_fix_latex_json_escapes(match.group(0)))
+        except Exception as exc:
+            logger.warning(
+                "Batch answer fill failed for questions %s-%s: %s",
+                start + 1,
+                start + len(batch),
+                exc,
+            )
+            continue
+
+        items = parsed.get("questions", parsed if isinstance(parsed, list) else [])
+        if not isinstance(items, list):
+            continue
+
+        by_qid = {
+            str(item.get("qid")): item
+            for item in items
+            if isinstance(item, dict) and item.get("qid") is not None
+        }
+        for index, question in enumerate(batch):
+            qid = f"q{start + index}"
+            item = by_qid.get(qid)
+            if not item and not by_qid and index < len(items) and isinstance(items[index], dict):
+                item = items[index]
+            if not item:
+                continue
+            if _is_placeholder_answer(question.get("answer")) and not _is_placeholder_answer(item.get("answer")):
+                question["answer"] = str(item.get("answer") or "").strip()
+            if _is_placeholder_answer(question.get("solution")) and not _is_placeholder_answer(item.get("solution")):
+                question["solution"] = str(item.get("solution") or "").strip()
+        if progress_callback:
+            progress_callback(min(start + len(batch), len(missing)), len(missing), "batch")
 
 
 async def _run_file_recognition_background(
@@ -1364,20 +1612,36 @@ async def _run_file_recognition_background(
         ).first()
         total_pages = max(1, int(task.page_count or 1)) if task else 1
 
+        def answer_progress_callback(done: int, total: int, mode: str) -> None:
+            if total <= 0:
+                return
+            base = 78 if mode == "batch" else 90
+            span = 12 if mode == "batch" else 8
+            percent = min(98, base + int(done / total * span))
+            progress_store.update(
+                task_id,
+                current_page=total_pages,
+                total_pages=total_pages,
+                progress_percent=percent,
+                message=f"正在生成答案解析...（{done}/{total}）",
+            )
+
         progress_store.update(
             task_id,
             status="pending",
             current_page=0,
             total_pages=total_pages,
             questions_found=0,
+            progress_percent=2,
             message="正在准备识别...",
         )
 
         if file_type == "markdown":
             progress_store.update(
                 task_id,
-                current_page=1,
+                current_page=0,
                 total_pages=1,
+                progress_percent=15,
                 message="正在解析 Markdown 文件...",
             )
             markdown_text = _decode_markdown_file(file_bytes).strip()
@@ -1390,6 +1654,9 @@ async def _run_file_recognition_background(
                 markdown_text,
                 call_text_llm,
                 pdf_images=None,
+                prefer_section_split=True,
+                enrich_local_answers=False,
+                prefer_local_first=True,
             )
             if not questions:
                 raise ValueError("未能从 Markdown 中识别出题目")
@@ -1397,15 +1664,22 @@ async def _run_file_recognition_background(
             progress_store.update(
                 task_id,
                 questions_found=len(questions),
+                progress_percent=75,
                 message=f"已识别 {len(questions)} 道题，正在补全答案与解析...",
             )
-            await _fill_missing_answers_for_questions(questions)
+            await _fill_missing_answers_for_questions(
+                questions,
+                progress_callback=answer_progress_callback,
+                use_batch=False,
+            )
+            questions = _cleanup_recognized_questions(questions)
 
             progress_store.update(
                 task_id,
                 current_page=1,
                 total_pages=1,
                 questions_found=len(questions),
+                progress_percent=100,
                 message=f"识别完成，共 {len(questions)} 道题",
             )
             _save_questions_to_existing_task(
@@ -1426,17 +1700,23 @@ async def _run_file_recognition_background(
                         task_id,
                         current_page=current_page,
                         total_pages=total,
+                        progress_percent=min(65, int((current_page / max(total, 1)) * 65)),
                         message=message,
                     )
 
                 markdown_text, used_ocr = pdf_to_markdown(
                     file_bytes,
-                    max_pages=30,
+                    max_pages=total_pages,
                     use_ocr_fallback=True,
                     progress_callback=markdown_progress_callback,
                 )
                 if len(markdown_text.strip()) < 50:
                     raise ValueError("PDF 文本内容不足，正在切换视觉识别...")
+                text_quality = _pdf_markdown_text_quality(markdown_text)
+                if used_ocr or text_quality < 0.62:
+                    raise ValueError(
+                        f"PDF 文本层质量较低（{text_quality:.0%}），正在切换视觉识别..."
+                    )
 
                 from ..utils.deepseek import call_text_llm
 
@@ -1444,24 +1724,54 @@ async def _run_file_recognition_background(
                     task_id,
                     current_page=total_pages,
                     total_pages=total_pages,
+                    progress_percent=72,
                     message="正在提取题目并补全答案...",
                 )
                 questions = await extract_questions_from_markdown(
                     markdown_text,
                     call_text_llm,
                     pdf_images=None,
+                    prefer_section_split=False,
+                    enrich_local_answers=False,
                 )
                 if not questions:
                     raise ValueError("未能从 PDF 文本中提取出题目，正在切换视觉识别...")
+                questions = _cleanup_recognized_questions(questions)
+                if not questions:
+                    raise ValueError("PDF 文本识别结果质量较低，正在切换视觉识别...")
+
+                def text_fallback_progress_callback(message: str) -> None:
+                    current = progress_store.get(task_id) or {}
+                    progress_store.update(
+                        task_id,
+                        current_page=current.get("current_page", total_pages) or total_pages,
+                        total_pages=total_pages,
+                        questions_found=len(questions),
+                        progress_percent=max(72, current.get("progress_percent", 72)),
+                        message=message,
+                    )
+
+                questions = await _vision_fill_missing_pdf_pages(
+                    file_bytes=file_bytes,
+                    questions=questions,
+                    total_pages=total_pages,
+                    progress_callback=text_fallback_progress_callback,
+                )
+                questions = _cleanup_recognized_questions(questions)
 
                 progress_store.update(
                     task_id,
                     current_page=total_pages,
                     total_pages=total_pages,
                     questions_found=len(questions),
+                    progress_percent=78,
                     message=f"已识别 {len(questions)} 道题，正在补全答案与解析...",
                 )
-                await _fill_missing_answers_for_questions(questions)
+                await _fill_missing_answers_for_questions(
+                    questions,
+                    progress_callback=answer_progress_callback,
+                )
+                questions = _cleanup_recognized_questions(questions)
                 _save_questions_to_existing_task(
                     db,
                     task_id=task_id,
@@ -1474,6 +1784,7 @@ async def _run_file_recognition_background(
                     current_page=_normalize_page_count(questions, default=total_pages),
                     total_pages=_normalize_page_count(questions, default=total_pages),
                     questions_found=len(questions),
+                    progress_percent=100,
                     message=f"识别完成，共 {len(questions)} 道题",
                 )
                 return
@@ -1487,6 +1798,7 @@ async def _run_file_recognition_background(
                     current_page=0,
                     total_pages=total_pages,
                     questions_found=0,
+                    progress_percent=5,
                     message=f"{str(exc)} 正在切换视觉识别...",
                 )
 
@@ -1499,19 +1811,28 @@ async def _run_file_recognition_background(
                 current_page=current.get("current_page", 0) or 0,
                 total_pages=current.get("total_pages", total_pages),
                 questions_found=current.get("questions_found", 0),
+                progress_percent=current.get("progress_percent", 10),
                 message=message,
             )
 
         questions = await recognize_pdf_with_vision(file_bytes, progress_callback=progress_callback, dpi=200)
         if not questions:
             raise ValueError("未能从 PDF 中识别出题目")
+        questions = _cleanup_recognized_questions(questions)
+        if not questions:
+            raise ValueError("PDF 视觉识别结果质量较低，未能提取有效题目")
 
         progress_store.update(
             task_id,
             questions_found=len(questions),
+            progress_percent=78,
             message=f"已识别 {len(questions)} 道题，正在补全答案与解析...",
         )
-        await _fill_missing_answers_for_questions(questions)
+        await _fill_missing_answers_for_questions(
+            questions,
+            progress_callback=answer_progress_callback,
+        )
+        questions = _cleanup_recognized_questions(questions)
         _save_questions_to_existing_task(
             db,
             task_id=task_id,
@@ -1525,6 +1846,7 @@ async def _run_file_recognition_background(
             current_page=page_count,
             total_pages=page_count,
             questions_found=len(questions),
+            progress_percent=100,
             message=f"识别完成，共 {len(questions)} 道题",
         )
     except Exception as e:
@@ -1585,7 +1907,7 @@ async def recognize_pdf_async(
 
         try:
             with fitz.open(stream=file_bytes, filetype="pdf") as pdf_doc:
-                page_count = max(1, min(len(pdf_doc), 30))
+                page_count = max(1, len(pdf_doc))
         except Exception:
             page_count = 1
 
@@ -1605,6 +1927,7 @@ async def recognize_pdf_async(
         current_page=0,
         total_pages=page_count,
         questions_found=0,
+        progress_percent=1,
         message="任务已创建，正在准备识别...",
     )
 
@@ -1623,6 +1946,7 @@ async def recognize_pdf_async(
         "file_type": file_type,
         "page_count": page_count,
         "questions_found": 0,
+        "progress_percent": 1,
         "message": "识别任务已创建",
     }
 
@@ -1663,6 +1987,7 @@ def get_recognition_progress(
         "current_page": task.page_count if task.status in ("need_confirm", "confirmed") else 0,
         "total_pages": task.page_count or 0,
         "questions_found": blocks_count,
+        "progress_percent": 100 if task.status in ("need_confirm", "confirmed") else 0,
         "message": (
             "识别已完成" if task.status == "need_confirm"
             else "识别失败" if task.status == "failed"

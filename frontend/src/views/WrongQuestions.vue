@@ -307,6 +307,7 @@
               :current-page="pdfProgress.current_page || 0"
               :total-pages="pdfProgress.total_pages || 0"
               :questions-found="pdfProgress.questions_found || 0"
+              :progress-percent="pdfProgress.progress_percent"
               :message="pdfProgress.message || '正在准备识别...'"
               title="正在识别上传文件"
               subtitle="AI 正在分析文件内容，请耐心等待"
@@ -1156,6 +1157,7 @@ function startProgressPolling() {
         current_page: progress.current_page || 0,
         total_pages: progress.total_pages || 0,
         questions_found: progress.questions_found || 0,
+        progress_percent: progress.progress_percent ?? null,
         message: progress.message || '',
         status: progress.status,
       }

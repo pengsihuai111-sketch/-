@@ -544,10 +544,10 @@ Return:
     return questions
 
 
-async def _build_local_result(markdown_text: str, llm_caller) -> List[Dict]:
+async def _build_local_result(markdown_text: str, llm_caller, enrich_answers: bool = True) -> List[Dict]:
     """Build local parsing result and enrich it with answers when possible."""
     questions = _extract_questions_from_markdown_locally(markdown_text)
-    if not questions:
+    if not questions or not enrich_answers:
         return questions
     try:
         return await asyncio.wait_for(
@@ -559,32 +559,100 @@ async def _build_local_result(markdown_text: str, llm_caller) -> List[Dict]:
         return questions
 
 
+async def _extract_questions_page_groups(
+    page_sections: List[Tuple[int, str]],
+    llm_caller,
+    group_size: int = 3,
+    concurrency: int = 3,
+) -> List[Dict]:
+    """Extract questions from PDF text in small page groups for better completeness."""
+    groups: List[List[Tuple[int, str]]] = [
+        page_sections[index:index + group_size]
+        for index in range(0, len(page_sections), group_size)
+    ]
+    semaphore = asyncio.Semaphore(concurrency)
+
+    async def parse_group(group_index: int, group: List[Tuple[int, str]]) -> List[Dict]:
+        group_text = "\n\n".join(
+            f"---\n**PAGE {page_no}**\n---\n{content}"
+            for page_no, content in group
+            if content.strip()
+        )
+        if not group_text.strip():
+            return []
+
+        async with semaphore:
+            try:
+                questions = await _extract_questions_single_batch(group_text, llm_caller)
+            except Exception as exc:
+                logger.warning(f"Page group {group_index} LLM extraction failed: {exc}")
+                questions = []
+
+        if questions:
+            default_page = group[0][0]
+            for question in questions:
+                if not question.get("page_no"):
+                    question["page_no"] = default_page
+            return questions
+
+        return _extract_questions_from_markdown_locally(group_text)
+
+    results = await asyncio.gather(
+        *(parse_group(index, group) for index, group in enumerate(groups, start=1))
+    )
+    questions: List[Dict] = []
+    for group_questions in results:
+        questions.extend(group_questions)
+    return questions
+
+
 async def extract_questions_from_markdown(
     markdown_text: str,
     llm_caller,
     pdf_images: Optional[Dict[int, List[bytes]]] = None,
+    prefer_section_split: bool = False,
+    enrich_local_answers: bool = True,
+    prefer_local_first: bool = False,
 ) -> List[Dict]:
     """Extract structured questions from markdown using LLM first, then local fallback."""
     del pdf_images
 
     page_sections = _extract_page_sections(markdown_text)
-    divider_sections = _extract_questions_from_markdown_sections(markdown_text)
-    if len(divider_sections) >= 2:
-        logger.info(
-            f"Using section parser for divider-based markdown ({len(divider_sections)} questions)"
-        )
-        return divider_sections
+    if prefer_section_split and not PAGE_MARKER_REGEX.search(markdown_text):
+        divider_sections = _extract_questions_from_markdown_sections(markdown_text)
+        if len(divider_sections) >= 2:
+            logger.info(
+                f"Using section parser for divider-based markdown ({len(divider_sections)} questions)"
+            )
+            return divider_sections
+
+    if prefer_local_first and not PAGE_MARKER_REGEX.search(markdown_text):
+        local_questions = _extract_questions_from_markdown_locally(markdown_text)
+        if local_questions:
+            logger.info(
+                "Using local-first markdown parser (%s questions)",
+                len(local_questions),
+            )
+            return local_questions
 
     try:
         if len(page_sections) > 4 or len(markdown_text) > 8000:
             logger.info(
-                f"Using local parser for large document ({len(markdown_text)} chars, {len(page_sections)} pages)"
+                f"Using grouped extraction for large document ({len(markdown_text)} chars, {len(page_sections)} pages)"
             )
-            return await _build_local_result(markdown_text, llm_caller)
+            if len(page_sections) > 1:
+                grouped_questions = await _extract_questions_page_groups(page_sections, llm_caller)
+                if grouped_questions:
+                    return grouped_questions
+            return await _build_local_result(markdown_text, llm_caller, enrich_answers=enrich_local_answers)
 
         if len(page_sections) <= 1 or len(markdown_text) < 3000:
             questions = await _extract_questions_single_batch(markdown_text, llm_caller)
-            return questions or await _build_local_result(markdown_text, llm_caller)
+            return questions or await _build_local_result(
+                markdown_text,
+                llm_caller,
+                enrich_answers=enrich_local_answers,
+            )
 
         logger.info(
             f"Medium document detected ({len(markdown_text)} chars, {len(page_sections)} pages), processing in batches"
@@ -614,7 +682,7 @@ async def extract_questions_from_markdown(
     except Exception as exc:
         logger.warning(f"LLM markdown extraction failed, switching to local parser: {exc}")
 
-    return await _build_local_result(markdown_text, llm_caller)
+    return await _build_local_result(markdown_text, llm_caller, enrich_answers=enrich_local_answers)
 
 
 async def _extract_questions_single_batch(markdown_text: str, llm_caller) -> List[Dict]:
