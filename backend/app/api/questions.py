@@ -68,6 +68,78 @@ def list_questions(
     )
 
 
+@router.post("/recognize-markdown")
+async def recognize_questions_from_markdown(
+    file: UploadFile = File(...),
+    user_id: int = Depends(get_current_user_id),
+):
+    """上传 Markdown 文件，识别题目
+
+    Args:
+        file: Markdown文件 (.md 或 .markdown)
+    """
+    logger.info(f"Markdown recognize request: file={file.filename}, user_id={user_id}")
+
+    # Validate file type
+    if not (file.filename and (file.filename.lower().endswith(".md") or file.filename.lower().endswith(".markdown"))):
+        raise HTTPException(status_code=400, detail="仅支持 .md 或 .markdown 文件")
+
+    # Read markdown file
+    try:
+        markdown_bytes = await file.read()
+        markdown_text = markdown_bytes.decode("utf-8")
+        logger.info(f"Markdown file read: {len(markdown_text)} chars")
+    except UnicodeDecodeError:
+        raise HTTPException(status_code=400, detail="文件编码错误，请确保文件是 UTF-8 编码")
+    except Exception as e:
+        logger.error(f"Failed to read markdown file: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"读取文件失败: {str(e)}")
+
+    if len(markdown_text) > 1024 * 1024:  # 1MB text limit
+        raise HTTPException(status_code=400, detail="Markdown 文件内容不能超过 1MB")
+
+    # Extract questions from markdown
+    try:
+        from ..utils.pdf_to_markdown import extract_questions_from_markdown
+        from ..utils.deepseek import _call_text_llm
+
+        logger.info("Extracting questions from markdown")
+        questions = await extract_questions_from_markdown(markdown_text, _call_text_llm)
+        logger.info(f"Extracted {len(questions)} questions from markdown")
+
+        # Collect quality metrics
+        quality_warnings = []
+        low_confidence_count = 0
+        incomplete_count = 0
+
+        for q in questions:
+            if not q.get("is_complete", True):
+                incomplete_count += 1
+            if q.get("confidence", 1.0) < 0.7:
+                low_confidence_count += 1
+            if q.get("quality_issues"):
+                quality_warnings.extend(q["quality_issues"])
+
+        return {
+            "message": f"识别完成，共 {len(questions)} 道题",
+            "method": "markdown",
+            "questions": questions,
+            "has_images": False,  # Direct markdown upload has no images
+            "quality_summary": {
+                "total_questions": len(questions),
+                "incomplete_questions": incomplete_count,
+                "low_confidence_questions": low_confidence_count,
+                "has_quality_issues": len(quality_warnings) > 0,
+                "pdf_has_images": False,
+            },
+            "quality_warnings": list(set(quality_warnings)) if quality_warnings else [],
+        }
+
+    except Exception as e:
+        logger.error(f"Markdown extraction failed: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"题目提取失败: {str(e)}")
+
+
 @router.post("/recognize-pdf")
 async def recognize_questions_from_pdf(
     file: UploadFile = File(...),
