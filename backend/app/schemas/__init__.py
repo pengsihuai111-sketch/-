@@ -437,7 +437,21 @@ class RecognitionTaskOut(BaseModel):
 # ===================== AI Practice =====================
 
 class AIPracticePreviewRequest(BaseModel):
-    prompt: str = Field(..., min_length=2, max_length=2000)
+    prompt: str = Field("", max_length=2000)
+    sheet_name: str = ""
+    sheet_type: str = "special_topic"
+    sheet_count: int = Field(1, ge=1, le=5)
+    target_count: int = Field(8, ge=4, le=24)
+    target_minutes: Optional[int] = Field(None, ge=10, le=120)
+    knowledge_categories: List[str] = Field(default_factory=list)
+    knowledge_points: List[str] = Field(default_factory=list)
+    question_types: List[str] = Field(default_factory=list)
+    question_type_counts: Dict[str, int] = Field(default_factory=dict)
+    exclude_question_types: List[str] = Field(default_factory=list)
+    difficulties: List[str] = Field(default_factory=list)
+    difficulty_progression: bool = True
+    must_include_wrong_questions: bool = False
+    avoid_recent_questions: bool = True
 
 
 class AIParsedRequirement(BaseModel):
@@ -454,6 +468,7 @@ class AIParsedRequirement(BaseModel):
     difficulties: List[str] = Field(default_factory=list)
     difficulty_progression: bool = True
     must_include_wrong_questions: bool = False
+    avoid_recent_questions: bool = True
     strategy_hint: str = ""
     reasoning_summary: str = ""
     learning_advice: str = ""
@@ -464,6 +479,8 @@ class AIPracticeSuggestion(BaseModel):
     selection_reason: str = ""
     ordering_reason: str = ""
     coverage_summary: str = ""
+    explanation_lines: List[str] = Field(default_factory=list)
+    review_summary: str = ""
 
 
 class AISelectedQuestion(BaseModel):
@@ -484,6 +501,9 @@ class AIPracticeVariant(BaseModel):
     sheet_name: str = ""
     selected_questions: List[AISelectedQuestion] = Field(default_factory=list)
     estimated_time: int = 0
+    composition_summary: str = ""
+    coverage_summary: str = ""
+    review_summary: str = ""
 
 
 class AIPracticePreviewResponse(BaseModel):
@@ -518,6 +538,7 @@ class AIPracticeReplaceRequest(BaseModel):
     parsed_requirement: AIParsedRequirement
     current_question_ids: List[int] = Field(default_factory=list)
     replace_question_id: int
+    replace_mode: str = "balanced"
 
 
 class AIPracticeSupplementRequest(BaseModel):
@@ -528,3 +549,4 @@ class AIPracticeSupplementRequest(BaseModel):
 class AIPracticeAdjustResponse(BaseModel):
     question: AISelectedQuestion
     estimated_time: int = 0
+    review_hint: str = ""
