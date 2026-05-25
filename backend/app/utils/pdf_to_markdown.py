@@ -14,6 +14,8 @@ import fitz  # PyMuPDF
 from PIL import Image
 from rapidocr_onnxruntime import RapidOCR
 
+from .knowledge_classifier import normalize_question_metadata, normalize_questions_metadata
+
 logger = logging.getLogger(__name__)
 _rapid_ocr_engine = None
 
@@ -277,7 +279,7 @@ def _extract_questions_from_markdown_locally(markdown_text: str) -> List[Dict]:
             return
 
         questions.append(
-            {
+            normalize_question_metadata({
                 "question_no": question_data["question_no"],
                 "question_text": text,
                 "page_no": question_data["page_no"],
@@ -289,7 +291,7 @@ def _extract_questions_from_markdown_locally(markdown_text: str) -> List[Dict]:
                 "knowledge_category": "其他",
                 "is_complete": True,
                 "confidence": 0.55,
-            }
+            })
         )
 
     for page_no, content in page_sections:
@@ -421,7 +423,7 @@ def _extract_questions_from_markdown_sections(markdown_text: str) -> List[Dict]:
         used_question_nos.add(question_no)
 
         questions.append(
-            {
+            normalize_question_metadata({
                 "question_no": question_no,
                 "question_text": text,
                 "page_no": 1,
@@ -433,7 +435,7 @@ def _extract_questions_from_markdown_sections(markdown_text: str) -> List[Dict]:
                 "knowledge_category": "其他",
                 "is_complete": True,
                 "confidence": 0.55,
-            }
+            })
         )
 
     logger.info(f"Section markdown fallback extracted {len(questions)} questions")
@@ -503,7 +505,7 @@ Return:
       "question_type": "fill_blank|choice|calculation|problem_solving|other",
       "difficulty": "基础|中等|挑战",
       "knowledge_point": "knowledge point",
-      "knowledge_category": "几何|计算|数论|方程与应用|逻辑|基础|其他"
+      "knowledge_category": "行程|工程|经济|浓度|几何|计算|数论|方程与应用|逻辑推理|统计|基础|其他"
     }
   ]
 }"""
@@ -643,16 +645,16 @@ async def extract_questions_from_markdown(
             if len(page_sections) > 1:
                 grouped_questions = await _extract_questions_page_groups(page_sections, llm_caller)
                 if grouped_questions:
-                    return grouped_questions
-            return await _build_local_result(markdown_text, llm_caller, enrich_answers=enrich_local_answers)
+                    return normalize_questions_metadata(grouped_questions)
+            return normalize_questions_metadata(await _build_local_result(markdown_text, llm_caller, enrich_answers=enrich_local_answers))
 
         if len(page_sections) <= 1 or len(markdown_text) < 3000:
             questions = await _extract_questions_single_batch(markdown_text, llm_caller)
-            return questions or await _build_local_result(
+            return normalize_questions_metadata(questions or await _build_local_result(
                 markdown_text,
                 llm_caller,
                 enrich_answers=enrich_local_answers,
-            )
+            ))
 
         logger.info(
             f"Medium document detected ({len(markdown_text)} chars, {len(page_sections)} pages), processing in batches"
@@ -676,13 +678,13 @@ async def extract_questions_from_markdown(
                 logger.warning(f"Batch {index} failed: {exc}")
 
         if all_questions:
-            return all_questions
+            return normalize_questions_metadata(all_questions)
 
         logger.warning("LLM batch extraction returned no questions, switching to local parser")
     except Exception as exc:
         logger.warning(f"LLM markdown extraction failed, switching to local parser: {exc}")
 
-    return await _build_local_result(markdown_text, llm_caller, enrich_answers=enrich_local_answers)
+    return normalize_questions_metadata(await _build_local_result(markdown_text, llm_caller, enrich_answers=enrich_local_answers))
 
 
 async def _extract_questions_single_batch(markdown_text: str, llm_caller) -> List[Dict]:
@@ -709,7 +711,7 @@ Return:
       "question_type": "fill_blank|choice|calculation|problem_solving|other",
       "difficulty": "基础|中等|挑战",
       "knowledge_point": "knowledge point",
-      "knowledge_category": "几何|计算|数论|方程与应用|逻辑|基础|其他",
+      "knowledge_category": "行程|工程|经济|浓度|几何|计算|数论|方程与应用|逻辑推理|统计|基础|其他",
       "is_complete": true,
       "confidence": 0.95
     }
@@ -736,7 +738,7 @@ Return:
         response = _fix_latex_json_escapes(response)
         questions = _parse_response(response)
         logger.info(f"Extracted {len(questions)} questions from single batch")
-        return questions
+        return normalize_questions_metadata(questions)
     except Exception as exc:
         logger.error(f"Failed to extract questions from batch: {exc}")
         logger.debug(f"Markdown text length: {len(markdown_text)} chars")
@@ -777,7 +779,7 @@ def _attach_images_to_questions(questions: List[Dict], pdf_images: Dict[int, Lis
         if question_images:
             question["image_urls"] = question_images
 
-    return questions
+    return normalize_questions_metadata(questions)
 
 
 def detect_has_images(pdf_bytes: bytes, max_pages: int = 30) -> Dict[int, bool]:

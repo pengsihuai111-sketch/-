@@ -1062,9 +1062,9 @@ def _build_variants(parsed: Dict[str, Any], candidates: List[Question], score_ma
             if not selected:
                 continue
             signature = tuple(question.question_id for question in selected)
-            if signature in used_signatures:
-                continue
             current_score = _evaluate_variant(selected, parsed, snapshot, score_map)
+            if signature in used_signatures:
+                current_score -= 20
             if best_score is None or current_score > best_score:
                 best_selected = selected
                 best_score = current_score
@@ -1255,7 +1255,7 @@ def confirm_ai_sheets(req: AIPracticeConfirmRequest, user_id: int, db: Session) 
         id_order = {qid: order for order, qid in enumerate(question_ids)}
         selected.sort(key=lambda q: id_order.get(q.question_id, 9999))
         item_name = _clean_str(item.sheet_name if hasattr(item, "sheet_name") else item.get("sheet_name")) or base_name
-        if len(variant_payloads) > 1:
+        if len(variant_payloads) > 1 and item_name == base_name:
             item_name = f"{item_name} {index}"
         created.append(_persist_sheet(selected, user_id, db, item_name, req.sheet_type))
 

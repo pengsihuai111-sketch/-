@@ -12,11 +12,18 @@ from ..models import (
     Question, PracticeSheet, SheetQuestion, UserPracticeHistory,
     UserWrongQuestion, UserKnowledgeMastery, PracticeType, SheetType,
 )
-from ..schemas import GenerateSheetRequest, PracticeSheetOut, QuestionOut, SubmitSheetRequest, SubmitResultOut, QuestionResultOut, GenerateWeekResponse, DaySheetOut, MarkSheetRequest, MarkItem, GenerateWrongPeriodRequest, SmartRedoRequest
+from ..schemas import GenerateSheetRequest, PracticeSheetOut, QuestionOut, SubmitSheetRequest, SubmitResultOut, QuestionResultOut, GenerateWeekResponse, DaySheetOut, MarkSheetRequest, MarkItem, GenerateWrongPeriodRequest, SmartRedoRequest, SelectedWrongPracticeRequest
 from ..utils.auth import get_current_user_id
 from ..config import UPLOAD_DIR, IMAGE_DIR
 
 router = APIRouter(prefix="/api/practice", tags=["练习单"])
+
+
+def _default_practice_sheet_name(sheet_type: str, suffix: str = "") -> str:
+    today = date.today().isoformat()
+    if sheet_type == "wrong_redo":
+        return f"错题原题练习单_{today}{suffix}"
+    return f"{sheet_type}_练习单_{today}{suffix}"
 
 
 @router.post("/generate")
@@ -121,7 +128,7 @@ def generate_sheet(
 
     # 创建练习单
     time_estimate = _estimate_time(selected)
-    sheet_name = req.sheet_name or f"{req.sheet_type}_练习单_{date.today().isoformat()}"
+    sheet_name = req.sheet_name or _default_practice_sheet_name(req.sheet_type)
     sheet = PracticeSheet(
         user_id=user_id,
         sheet_name=sheet_name,
@@ -729,7 +736,7 @@ def generate_redo_sheet(
         raise HTTPException(status_code=400, detail="没有符合条件的题目")
 
     time_est = _estimate_time(all_selected)
-    sheet_name = f"错题重练_{date.today().isoformat()}"
+    sheet_name = _default_practice_sheet_name("wrong_redo")
 
     sheet = PracticeSheet(
         user_id=user_id,
@@ -1057,7 +1064,7 @@ def generate_wrong_period_sheet(
         chunk_qs, chunk_sections = _group_questions_by_type(chunk)
         time_est = _estimate_time(chunk_qs)
         suffix = f" 第{ci+1}卷" if n_sheets > 1 else ""
-        sheet_name = req.name or f"错题练习单_{req.start_date}~{req.end_date}{suffix}"
+        sheet_name = f"{req.name}{suffix}" if req.name else _default_practice_sheet_name("wrong_redo", suffix)
         sheet = PracticeSheet(
             user_id=user_id,
             sheet_name=sheet_name,
@@ -1215,7 +1222,7 @@ def generate_smart_redo_sheet(
         raise HTTPException(status_code=400, detail="没有符合条件的题目")
 
     time_est = _estimate_time(final_questions)
-    sheet_name = req.name or f"智慧错题重练_{date.today().isoformat()}"
+    sheet_name = req.name or _default_practice_sheet_name("wrong_redo")
 
     sheet = PracticeSheet(
         user_id=user_id,
@@ -1275,6 +1282,114 @@ def generate_smart_redo_sheet(
     )
     data = resp.model_dump()
     data["_sections"] = sections_data
+    return data
+
+
+@router.post("/generate-selected-wrongs")
+def generate_selected_wrong_sheet(
+    req: SelectedWrongPracticeRequest,
+    user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    """根据用户手动勾选的错题生成原题/举一反三/混合练习单。"""
+    mode = req.mode if req.mode in {"original", "similar", "mixed"} else "mixed"
+    records = (
+        db.query(UserWrongQuestion)
+        .filter(
+            UserWrongQuestion.user_id == user_id,
+            UserWrongQuestion.record_id.in_(req.record_ids),
+        )
+        .all()
+    )
+    if not records:
+        raise HTTPException(status_code=400, detail="请先选择要练习的错题")
+
+    record_order = {record_id: index for index, record_id in enumerate(req.record_ids)}
+    records.sort(key=lambda item: record_order.get(item.record_id, 9999))
+    original_questions = []
+    for record in records:
+        question = db.query(Question).filter(Question.question_id == record.question_id).first()
+        if question:
+            original_questions.append(question)
+
+    if not original_questions:
+        raise HTTPException(status_code=400, detail="所选错题没有对应题目")
+
+    selected = []
+    sections_data = []
+    used_ids = set()
+    if mode in {"original", "mixed"}:
+        selected.extend(original_questions)
+        used_ids.update(q.question_id for q in original_questions)
+        sections_data.append({"label": "一、错题原题重练", "start": 0, "count": len(original_questions)})
+
+    similar_questions = []
+    if mode in {"similar", "mixed"} and req.similar_per_wrong > 0:
+        similar_count = len(original_questions) * req.similar_per_wrong
+        similar_questions = _recommend_similar_questions(
+            db,
+            user_id,
+            original_questions,
+            similar_count,
+            exclude_ids=used_ids,
+        )
+        if similar_questions:
+            sections_data.append({
+                "label": "二、举一反三迁移练习" if sections_data else "一、举一反三迁移练习",
+                "start": len(selected),
+                "count": len(similar_questions),
+            })
+            selected.extend(similar_questions)
+            used_ids.update(q.question_id for q in similar_questions)
+
+    if not selected:
+        raise HTTPException(status_code=400, detail="没有可生成的练习题")
+
+    sheet_name = req.name or _default_practice_sheet_name("wrong_redo")
+    sheet = PracticeSheet(
+        user_id=user_id,
+        sheet_name=sheet_name,
+        sheet_type=SheetType.wrong_redo,
+        total_questions=len(selected),
+        estimated_time=_estimate_time(selected),
+    )
+    if sections_data:
+        sheet.sections_json = json.dumps(sections_data, ensure_ascii=False)
+    db.add(sheet)
+    db.flush()
+
+    for index, question in enumerate(selected, start=1):
+        db.add(SheetQuestion(
+            sheet_id=sheet.sheet_id,
+            question_id=question.question_id,
+            question_order=index,
+        ))
+        db.add(UserPracticeHistory(
+            user_id=user_id,
+            question_id=question.question_id,
+            practice_date=date.today(),
+            practice_type=PracticeType.wrong_redo,
+            sheet_id=sheet.sheet_id,
+        ))
+
+    db.commit()
+    db.refresh(sheet)
+
+    data = PracticeSheetOut(
+        sheet_id=sheet.sheet_id,
+        sheet_name=sheet.sheet_name,
+        sheet_type=sheet.sheet_type,
+        total_questions=sheet.total_questions,
+        estimated_time=sheet.estimated_time,
+        generated_date=sheet.generated_date,
+        questions=[QuestionOut.model_validate(q) for q in selected],
+    ).model_dump()
+    data["_sections"] = sections_data
+    data["_source_summary"] = {
+        "original_count": len(original_questions) if mode in {"original", "mixed"} else 0,
+        "similar_count": len(similar_questions),
+        "selected_wrong_count": len(original_questions),
+    }
     return data
 
 

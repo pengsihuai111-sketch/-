@@ -9,6 +9,7 @@ from ..database import get_db
 from ..models import Question, UserWrongQuestion, UserWrongQuestion as WrongQuestion, UserPracticeHistory, SheetQuestion
 from ..schemas import QuestionOut, QuestionListResponse, QuestionCreate, BatchImportRequest, WrongQuestionCreate, BatchDeleteRequest
 from ..utils.auth import get_current_user_id
+from ..utils.knowledge_classifier import DEFAULT_KNOWLEDGE_CATALOG
 from ..utils.deepseek import recognize_questions
 from ..utils.pdf_processor import pdf_to_images
 from ..config import IMAGE_DIR
@@ -350,11 +351,13 @@ def list_knowledge_points(db: Session = Depends(get_db)):
         Question.knowledge_category,
     ).distinct().all()
 
-    kp_list = {}
+    kp_list = {cat: list(points) for cat, points in DEFAULT_KNOWLEDGE_CATALOG.items()}
     for kp, cat in results:
-        if cat not in kp_list:
-            kp_list[cat] = []
-        kp_list[cat].append(kp)
+        category = cat or "其他"
+        if category not in kp_list:
+            kp_list[category] = []
+        if kp and kp not in kp_list[category]:
+            kp_list[category].append(kp)
 
     return {"knowledge_points": kp_list}
 
@@ -362,7 +365,10 @@ def list_knowledge_points(db: Session = Depends(get_db)):
 @router.get("/categories/list")
 def list_categories(db: Session = Depends(get_db)):
     results = db.query(Question.knowledge_category).distinct().all()
-    categories = [r[0] for r in results if r[0]]
+    categories = list(DEFAULT_KNOWLEDGE_CATALOG.keys())
+    for row in results:
+        if row[0] and row[0] not in categories:
+            categories.append(row[0])
     return {"categories": categories}
 
 

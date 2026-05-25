@@ -117,7 +117,7 @@ async def recognize_page(img: Image.Image, page_num: int, total_pages: int) -> L
       "question_type": "fill_blank|choice|calculation|problem_solving|other",
       "difficulty": "基础|中等|挑战",
       "knowledge_point": "知识点",
-      "knowledge_category": "几何|计算|数论|方程与应用|逻辑|基础|其他",
+      "knowledge_category": "行程|工程|经济|浓度|几何|计算|数论|方程与应用|逻辑推理|统计|基础|其他",
       "is_complete": true,
       "confidence": 0.9
     }

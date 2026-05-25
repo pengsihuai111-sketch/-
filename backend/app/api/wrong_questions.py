@@ -34,6 +34,7 @@ from ..schemas import (
 from ..models import ErrorType
 from ..utils.auth import get_current_user_id
 from ..utils.deepseek import recognize_questions, generate_answer, analyze_page_structure, recognize_single_question, match_question_candidates
+from ..utils.knowledge_classifier import normalize_question_metadata, normalize_questions_metadata
 from ..utils.pdf_processor import pdf_to_images
 from ..utils.pdf_to_markdown import pdf_to_markdown, extract_questions_from_markdown
 from ..utils.image_processing import (
@@ -1350,6 +1351,7 @@ def _create_completed_file_recognition_task(
     page_count: int,
     questions: List[dict],
 ) -> WrongQuestionRecognitionTask:
+    normalize_questions_metadata(questions)
     task = WrongQuestionRecognitionTask(
         user_id=user_id,
         file_url="",
@@ -1363,6 +1365,7 @@ def _create_completed_file_recognition_task(
     db.flush()
 
     for index, question in enumerate(questions, start=1):
+        normalize_question_metadata(question)
         image_urls = question.get("image_urls") or []
         knowledge_points = question.get("knowledge_points") or []
         if not knowledge_points and question.get("knowledge_point"):
@@ -1418,6 +1421,7 @@ def _save_questions_to_existing_task(
     recognition_mode: str,
     questions: List[dict],
 ) -> None:
+    normalize_questions_metadata(questions)
     task = db.query(WrongQuestionRecognitionTask).filter(
         WrongQuestionRecognitionTask.id == task_id
     ).first()
@@ -1429,6 +1433,7 @@ def _save_questions_to_existing_task(
     ).delete()
 
     for index, question in enumerate(questions, start=1):
+        normalize_question_metadata(question)
         image_urls = question.get("image_urls") or []
         knowledge_points = question.get("knowledge_points") or []
         if not knowledge_points and question.get("knowledge_point"):

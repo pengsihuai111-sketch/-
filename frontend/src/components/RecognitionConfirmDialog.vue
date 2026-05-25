@@ -66,6 +66,7 @@
                 <el-form-item label="题干">
                   <el-input v-model="block._editedText" type="textarea" :rows="2"
                             @input="onEditBlock(block)" />
+                  <div v-if="block._editedText" class="math-preview" v-html="renderMath(block._editedText)" />
                 </el-form-item>
                 <el-form-item label="题型">
                   <el-select v-model="block._editedType" style="width:140px" @change="onEditBlock(block)">
@@ -79,15 +80,26 @@
                   <el-input v-model="block._editedKps" placeholder="逗号分隔"
                             @input="onEditBlock(block)" />
                 </el-form-item>
+                <el-form-item label="知识类别">
+                  <el-select
+                    v-model="block._editedCategory"
+                    filterable
+                    allow-create
+                    default-first-option
+                    style="width:100%"
+                    @change="onEditBlock(block)">
+                    <el-option
+                      v-for="category in knowledgeCategories"
+                      :key="category"
+                      :label="category"
+                      :value="category" />
+                  </el-select>
+                </el-form-item>
                 <el-form-item label="答案" v-if="getBlockAnswer(block)">
-                  <div style="padding:8px;background:#f0f9ff;border-radius:4px;color:#0369a1;white-space:pre-wrap">
-                    {{ getBlockAnswer(block) }}
-                  </div>
+                  <div class="answer-preview" v-html="renderMath(getBlockAnswer(block))" />
                 </el-form-item>
                 <el-form-item label="解析" v-if="getBlockSolution(block)">
-                  <div style="padding:8px;background:#f0fdf4;border-radius:4px;color:#15803d;white-space:pre-wrap;max-height:120px;overflow-y:auto">
-                    {{ getBlockSolution(block) }}
-                  </div>
+                  <div class="solution-preview" v-html="renderMath(getBlockSolution(block))" />
                 </el-form-item>
                 <el-form-item label="配图">
                   <div style="display:flex;gap:8px;align-items:center">
@@ -166,6 +178,7 @@ import { ref, computed, watch } from 'vue'
 import { confirmRecognitionTask } from '../api/practice'
 import { createQuestion, uploadQuestionImage } from '../api/question'
 import { ElMessage } from 'element-plus'
+import { renderMath, latexToPlainText } from '../utils/math'
 
 const props = defineProps({
   visible: Boolean,
@@ -178,6 +191,33 @@ const confirmLoading = ref(false)
 const confirmForm = ref({ exam_name: '' })
 const allSelected = ref(true)
 const selectionIndeterminate = ref(false)
+const knowledgeCategories = [
+  '行程',
+  '工程',
+  '经济',
+  '浓度',
+  '几何',
+  '计算',
+  '数论',
+  '方程与应用',
+  '逻辑推理',
+  '统计',
+  '基础',
+  '其他',
+]
+
+const categoryRules = [
+  ['行程', ['行程', '相遇', '追及', '流水', '速度', '路程', '顺水', '逆水']],
+  ['工程', ['工程', '工作效率', '工作量', '合作', '完工']],
+  ['经济', ['经济', '利润', '成本', '售价', '定价', '折扣', '打折']],
+  ['浓度', ['浓度', '溶液', '盐水', '糖水', '含盐率', '混合']],
+  ['几何', ['几何', '面积', '周长', '圆柱', '圆锥', '体积', '比例尺']],
+  ['数论', ['数论', '因数', '倍数', '质数', '合数', '余数']],
+  ['方程与应用', ['方程', '比例', '百分数', '分数应用']],
+  ['逻辑推理', ['逻辑', '推理', '排列', '组合', '规律']],
+  ['统计', ['统计', '平均数', '概率']],
+  ['基础', ['单位换算', '时钟', '钟面']],
+]
 
 // Store block selection state separately for reactivity
 const blockSelections = ref(new Map())
@@ -190,9 +230,10 @@ watch(() => props.result, (val) => {
     for (const block of page.questions || []) {
       // Initialize block properties if not exists
       if (!('_editedText' in block)) {
-        block._editedText = block.ai_result?.question_text || ''
+        block._editedText = latexToPlainText(block.ai_result?.question_text || '')
         block._editedType = block.ai_result?.question_type || 'problem_solving'
         block._editedKps = (block.ai_result?.knowledge_points || []).join(', ')
+        block._editedCategory = block.ai_result?.knowledge_category || inferCategory(block)
         block._selectedMatchId = block.matched_questions?.[0]?.question_id || null
         block._showClean = false
         block._asNewQuestion = !block._selectedMatchId
@@ -237,11 +278,26 @@ const totalCount = computed(() => {
 const canConfirm = computed(() => selectedCount.value > 0)
 
 function getBlockAnswer(block) {
-  return block?.ai_answer || block?.ai_result?.answer || ''
+  return latexToPlainText(block?.ai_answer || block?.ai_result?.answer || '')
 }
 
 function getBlockSolution(block) {
-  return block?.ai_solution || block?.ai_result?.solution || ''
+  return latexToPlainText(block?.ai_solution || block?.ai_result?.solution || '')
+}
+
+function inferCategory(block) {
+  const text = [
+    block?._editedKps,
+    ...(block?.ai_result?.knowledge_points || []),
+    block?.ai_result?.knowledge_point,
+    block?._editedText,
+    block?.ai_result?.question_text,
+  ].filter(Boolean).join(' ')
+
+  for (const [category, keywords] of categoryRules) {
+    if (keywords.some(keyword => text.includes(keyword))) return category
+  }
+  return '其他'
 }
 
 function updateSelectionState() {
@@ -286,7 +342,9 @@ function selectMatch(block, mq) {
 }
 
 function onEditBlock(block) {
-  // User edited something — mark for re-evaluation
+  if (!block._editedCategory || block._editedCategory === '其他') {
+    block._editedCategory = inferCategory(block)
+  }
 }
 
 function handleQuestionImageUpload(file, block) {
@@ -367,8 +425,8 @@ async function handleConfirm() {
 
         const qData = {
           q_id: '',
-          knowledge_point: kps[0] || block.ai_result?.knowledge_points?.[0] || '未知',
-          knowledge_category: '',
+          knowledge_point: kps[0] || block.ai_result?.knowledge_points?.[0] || '综合应用',
+          knowledge_category: block._editedCategory || inferCategory(block),
           question_type: block._editedType || 'problem_solving',
           difficulty: block.ai_result?.difficulty || '中等',
           question_text: block._editedText || '',
@@ -413,6 +471,38 @@ function handleCancel() {
 </script>
 
 <style scoped>
+.math-preview {
+  width: 100%;
+  margin-top: 8px;
+  padding: 8px 10px;
+  background: #f8fafc;
+  border: 1px dashed #cbd5e1;
+  border-radius: 6px;
+  color: #334155;
+  line-height: 1.8;
+  white-space: pre-wrap;
+}
+
+.answer-preview {
+  padding: 8px;
+  background: #f0f9ff;
+  border-radius: 4px;
+  color: #0369a1;
+  line-height: 1.8;
+  white-space: pre-wrap;
+}
+
+.solution-preview {
+  padding: 8px;
+  background: #f0fdf4;
+  border-radius: 4px;
+  color: #15803d;
+  line-height: 1.8;
+  max-height: 140px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+}
+
 .match-item:hover {
   border-color: #409eff;
   background: #f0f7ff;

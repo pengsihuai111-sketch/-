@@ -52,13 +52,21 @@
               <el-form-item label="练习单名称">
                 <el-input v-model="form.sheet_name" placeholder="留空自动生成" />
               </el-form-item>
-              <el-form-item label="练习类型">
-                <el-select v-model="form.sheet_type" style="width: 100%">
-                  <el-option label="每日训练" value="daily" />
-                  <el-option label="错题重练" value="wrong_redo" />
+              <el-form-item label="生成模式">
+                <el-select v-model="generationMode" style="width: 100%" @change="onGenerationModeChange">
+                  <el-option label="知识点专项练习" value="knowledge" />
+                  <el-option label="错题原题练习" value="wrong_original" />
+                  <el-option label="错题举一反三" value="wrong_similar" />
+                  <el-option label="错题原题 + 举一反三" value="wrong_mixed" />
                 </el-select>
               </el-form-item>
-              <el-form-item label="难度筛选">
+              <el-form-item v-if="generationMode === 'knowledge'" label="练习类型">
+                <el-select v-model="form.sheet_type" style="width: 100%">
+                  <el-option label="每日训练" value="daily" />
+                  <el-option label="专题练习" value="special_topic" />
+                </el-select>
+              </el-form-item>
+              <el-form-item v-if="generationMode === 'knowledge'" label="难度筛选">
                 <el-checkbox-group v-model="form.difficulties">
                   <el-checkbox label="基础" />
                   <el-checkbox label="中等" />
@@ -66,41 +74,83 @@
                 </el-checkbox-group>
               </el-form-item>
 
-              <el-divider border-style="dashed" />
+              <template v-if="generationMode === 'knowledge'">
+                <el-divider border-style="dashed" />
 
-              <div style="margin-bottom: 12px;font-weight:bold;font-size:14px;color:#606266">按知识类别选题</div>
+                <div style="margin-bottom: 12px;font-weight:bold;font-size:14px;color:#606266">按知识类别选题</div>
 
-              <div style="max-height: 360px; overflow-y: auto; padding-right: 4px">
-                <div v-for="(kps, cat) in groupedKps" :key="cat" style="margin-bottom:10px;padding:8px 10px;background:#f9f9f9;border-radius:6px;border:1px solid #eee">
-                  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
-                    <span style="font-weight:bold;font-size:13px">{{ cat }}</span>
-                    <el-input-number v-model="categoryCounts[cat]" :min="0" :max="10" size="small" controls-position="right" style="width:100px" />
-                  </div>
-                  <div style="display:flex;flex-wrap:wrap;gap:3px;margin-top:4px">
-                    <el-tag
-                      v-for="kp in kps" :key="kp"
-                      size="small"
-                      :type="(selectedCategoryKps[cat] || []).includes(kp) ? 'primary' : 'info'"
-                      style="cursor:pointer"
-                      @click="toggleCategoryKp(cat, kp)"
-                    >{{ kp }}</el-tag>
+                <div style="max-height: 360px; overflow-y: auto; padding-right: 4px">
+                  <div v-for="(kps, cat) in groupedKps" :key="cat" style="margin-bottom:10px;padding:8px 10px;background:#f9f9f9;border-radius:6px;border:1px solid #eee">
+                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+                      <span style="font-weight:bold;font-size:13px">{{ cat }}</span>
+                      <el-input-number v-model="categoryCounts[cat]" :min="0" :max="10" size="small" controls-position="right" style="width:100px" />
+                    </div>
+                    <div style="display:flex;flex-wrap:wrap;gap:3px;margin-top:4px">
+                      <el-tag
+                        v-for="kp in kps" :key="kp"
+                        size="small"
+                        :type="(selectedCategoryKps[cat] || []).includes(kp) ? 'primary' : 'info'"
+                        style="cursor:pointer"
+                        @click="toggleCategoryKp(cat, kp)"
+                      >{{ kp }}</el-tag>
+                    </div>
                   </div>
                 </div>
-              </div>
 
-              <div style="text-align:center;margin:12px 0">
-                <el-tag :type="totalSelectedQuestions > 0 ? 'primary' : 'info'" size="medium">
-                  {{ totalSelectedQuestions > 0 ? `共 ${totalSelectedQuestions} 题，预计 ${Math.max(20, Math.round(totalSelectedQuestions * 3.5))} 分钟` : '请设置各类别题数' }}
-                </el-tag>
-              </div>
+                <div style="text-align:center;margin:12px 0">
+                  <el-tag :type="totalSelectedQuestions > 0 ? 'primary' : 'info'" size="medium">
+                    {{ totalSelectedQuestions > 0 ? `共 ${totalSelectedQuestions} 题，预计 ${Math.max(20, Math.round(totalSelectedQuestions * 3.5))} 分钟` : '请设置各类别题数' }}
+                  </el-tag>
+                </div>
+              </template>
+
+              <template v-else>
+                <el-divider border-style="dashed" />
+                <div style="margin-bottom: 12px;font-weight:bold;font-size:14px;color:#E67E22">选择错题并生成练习</div>
+                <div style="margin-bottom: 12px;padding:10px 12px;background:#fff7ed;border-radius:6px;border:1px solid #fed7aa">
+                  <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px">
+                    <el-button size="small" type="warning" :loading="wrongLoading" @click="loadWrongQuestionOptions">刷新错题</el-button>
+                    <el-checkbox v-model="wrongOnlyUnmastered" @change="loadWrongQuestionOptions">只看未掌握</el-checkbox>
+                    <span style="font-size:12px;color:#909399">已选择 {{ selectedWrongRecordIds.length }} 道错题</span>
+                  </div>
+                  <div v-if="wrongLoading" style="text-align:center;padding:16px;color:#999">正在加载错题...</div>
+                  <el-empty v-else-if="!wrongOptions.length" description="暂无可选错题" />
+                  <el-checkbox-group v-else v-model="selectedWrongRecordIds" style="display:block;max-height:280px;overflow-y:auto">
+                    <div v-for="item in wrongOptions" :key="item.record_id" style="padding:8px;margin-bottom:6px;background:#fff;border:1px solid #f3f4f6;border-radius:6px">
+                      <el-checkbox :label="item.record_id">
+                        <span style="font-weight:bold">#{{ item.record_id }}</span>
+                        <el-tag size="small" style="margin-left:4px">{{ item.question?.knowledge_point || '未分类' }}</el-tag>
+                        <el-tag v-if="item.error_type" size="small" type="warning" style="margin-left:4px">{{ item.error_type }}</el-tag>
+                      </el-checkbox>
+                      <div style="font-size:12px;color:#606266;line-height:1.5;margin-left:24px;margin-top:4px">
+                        {{ truncateWrongText(item.question?.question_text) }}
+                      </div>
+                    </div>
+                  </el-checkbox-group>
+                </div>
+                <el-form-item v-if="generationMode !== 'wrong_original'" label="举一反三">
+                  <div style="display:flex;align-items:center;gap:8px">
+                    <span style="font-size:13px;color:#606266">每道错题配</span>
+                    <el-input-number v-model="similarPerWrong" :min="1" :max="5" size="small" controls-position="right" style="width:100px" />
+                    <span style="font-size:13px;color:#606266">道迁移题</span>
+                  </div>
+                </el-form-item>
+              </template>
 
               <el-form-item>
-                <el-button type="primary" style="width: 100%" :disabled="totalSelectedQuestions === 0" @click="handleGenerate" :loading="genLoading">生成练习单</el-button>
+                <el-button
+                  type="primary"
+                  style="width: 100%"
+                  :disabled="generationMode === 'knowledge' ? totalSelectedQuestions === 0 : selectedWrongRecordIds.length === 0"
+                  @click="generationMode === 'knowledge' ? handleGenerate() : handleGenerateSelectedWrong()"
+                  :loading="genLoading || selectedWrongLoading">
+                  {{ generationMode === 'knowledge' ? '生成练习单' : '生成错题练习单' }}
+                </el-button>
               </el-form-item>
               <el-form-item>
                 <el-button type="success" style="width: 100%" @click="openAIDialog">🤖 AI智能生成</el-button>
               </el-form-item>
-              <template v-if="form.sheet_type === 'wrong_redo'">
+              <template v-if="generationMode === 'legacy_wrong_redo'">
                 <el-divider border-style="dashed" />
 
                 <!-- 按时间段生成多卷错题练习 -->
@@ -245,8 +295,22 @@
               <div v-for="(s, si) in periodLastResult.sheets" :key="s.sheet_id" style="display:flex;justify-content:space-between;align-items:center;padding:4px 0;border-bottom:1px solid #f5f5f5">
                 <span style="font-size:13px">第 {{ si + 1 }} 卷：{{ s.total_questions }} 题 · 约 {{ s.estimated_time }} 分钟</span>
                 <div style="display:flex;gap:4px">
-                  <el-button type="primary" link size="small" @click="downloadOneSheet(s)">PDF</el-button>
+                  <el-button type="primary" link size="small" @click="downloadOneSheet(s, 'student')">试卷下载</el-button>
+                  <el-button type="success" link size="small" @click="downloadOneSheet(s, 'answer')">答案下载</el-button>
                   <el-button size="small" link @click="openView(s)">预览</el-button>
+                </div>
+              </div>
+            </template>
+            <template v-else-if="recentGeneratedResult && recentGeneratedResult.sheets?.length">
+              <p style="font-size:13px;color:#409eff;margin-bottom:8px">
+                本次共生成 {{ recentGeneratedResult.sheets.length }} 套练习单
+              </p>
+              <div v-for="(s, si) in recentGeneratedResult.sheets" :key="s.sheet_id" style="display:flex;justify-content:space-between;align-items:center;padding:4px 0;border-bottom:1px solid #f5f5f5">
+                <span style="font-size:13px">第 {{ si + 1 }} 套：{{ s.sheet_name }} · {{ s.total_questions }} 题</span>
+                <div style="display:flex;gap:4px">
+                  <el-button type="primary" link size="small" @click="downloadOneSheet(s, 'student')">试卷下载</el-button>
+                  <el-button type="success" link size="small" @click="downloadOneSheet(s, 'answer')">答案下载</el-button>
+                  <el-button size="small" link @click="openView(s)">查看</el-button>
                 </div>
               </div>
             </template>
@@ -254,7 +318,8 @@
               <p><strong>{{ lastSheet.sheet_name }}</strong></p>
               <p>{{ lastSheet.total_questions }} 题，预计 {{ lastSheet.estimated_time }} 分钟</p>
               <div style="margin-top: 12px; display: flex; gap: 8px">
-                <el-button type="primary" size="small" @click="downloadCurrent">下载PDF(学生+答案)</el-button>
+                <el-button type="primary" size="small" @click="downloadCurrent('student')">试卷下载</el-button>
+                <el-button type="success" size="small" @click="downloadCurrent('answer')">答案下载</el-button>
                 <el-button size="small" @click="openView(lastSheet)">预览题目</el-button>
               </div>
             </template>
@@ -285,9 +350,10 @@
                   <el-tag v-else type="info" size="small" effect="plain">未做</el-tag>
                 </template>
               </el-table-column>
-              <el-table-column label="操作" width="200" fixed="right">
+              <el-table-column label="操作" width="240" fixed="right">
                 <template #default="{ row }">
-                  <el-button type="primary" link size="small" @click="downloadSheetAction(row)">PDF下载</el-button>
+                  <el-button type="primary" link size="small" @click="downloadSheetAction(row, 'student')">试卷下载</el-button>
+                  <el-button type="success" link size="small" @click="downloadSheetAction(row, 'answer')">答案下载</el-button>
                   <el-button type="success" link size="small" @click="openView(row)">查看</el-button>
                   <el-button type="danger" link size="small" @click="handleDelete(row)">删除</el-button>
                 </template>
@@ -307,7 +373,8 @@
           <div style="display: flex; justify-content: space-between; align-items: center">
             <span style="font-weight: bold">📄 {{ viewData?.sheet_name }}</span>
             <div>
-              <el-button type="primary" size="small" @click="downloadCurrent">下载PDF(学生+答案)</el-button>
+              <el-button type="primary" size="small" @click="downloadCurrent('student')">试卷下载</el-button>
+              <el-button type="success" size="small" @click="downloadCurrent('answer')">答案下载</el-button>
               <el-button size="small" @click="exitView">返回列表</el-button>
             </div>
           </div>
@@ -346,12 +413,12 @@
               </div>
             </div>
           </div>
-          <div style="background: #fff; padding: 12px; border-radius: 4px; white-space: pre-wrap; line-height: 1.6" v-html="renderMath(q.question_text)"></div>
+          <div style="background: #fff; padding: 12px; border-radius: 4px; white-space: pre-wrap; line-height: 1.6" v-html="renderMath(normalizePdfText(q.question_text))"></div>
           <div v-if="q.has_image && q.image_path" style="margin-top: 8px">
             <el-image :src="encodeURI(q.image_path)" style="max-width: 400px" fit="contain" />
           </div>
           <div style="margin-top: 8px; color: #909399; font-size: 13px">
-            <strong>答案：</strong><span v-html="renderMath(q.answer || '待补充')" />
+            <strong>答案：</strong><span v-html="renderMath(normalizePdfText(q.answer || '待补充'))" />
           </div>
         </div>
 
@@ -371,7 +438,7 @@
 
 <script setup>
 import { ref, reactive, computed, onMounted } from 'vue'
-import { generateSheet, listSheets, getSheet, deleteSheet, generateWeekSheets, completeSheet, generateSmartRedoSheet, generateWrongPeriodSheet } from '../api/practice'
+import { generateSheet, listSheets, getSheet, deleteSheet, generateWeekSheets, completeSheet, generateSmartRedoSheet, generateWrongPeriodSheet, generateSelectedWrongSheet, listWrongQuestions } from '../api/practice'
 import { listKnowledgePoints } from '../api/question'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Loading } from '@element-plus/icons-vue'
@@ -382,6 +449,7 @@ import AIPracticeDialog from '../components/AIPracticeDialog.vue'
 
 // ===== 列表模式 =====
 const form = reactive({ sheet_name: '', sheet_type: 'daily', difficulties: ['基础', '中等', '挑战'] })
+const generationMode = ref('knowledge')
 const groupedKps = ref({})        // { "几何": ["几何面积", ...], ... }
 const categoryCounts = reactive({})  // { "几何": 2, "计算": 1, ... }
 const selectedCategoryKps = reactive({}) // { "几何": ["几何面积", ...], ... } 默认全选
@@ -391,6 +459,44 @@ const lastSheet = ref(null)
 const weekData = ref(null)
 const weekLoading = ref(false)
 const smartLoading = ref(false)
+const wrongLoading = ref(false)
+const selectedWrongLoading = ref(false)
+const wrongOptions = ref([])
+const selectedWrongRecordIds = ref([])
+const wrongOnlyUnmastered = ref(true)
+const similarPerWrong = ref(1)
+
+function onGenerationModeChange(mode) {
+  if (mode === 'knowledge') {
+    form.sheet_type = 'daily'
+    return
+  }
+  form.sheet_type = 'wrong_redo'
+  loadWrongQuestionOptions()
+}
+
+function truncateWrongText(text) {
+  if (!text) return '题干缺失'
+  return text.length > 80 ? `${text.slice(0, 80)}...` : text
+}
+
+async function loadWrongQuestionOptions() {
+  wrongLoading.value = true
+  try {
+    const res = await listWrongQuestions({ page: 1, page_size: 100 })
+    let items = res.wrong_questions || []
+    if (wrongOnlyUnmastered.value) {
+      items = items.filter(item => !item.mastered)
+    }
+    wrongOptions.value = items
+    const validIds = new Set(items.map(item => item.record_id))
+    selectedWrongRecordIds.value = selectedWrongRecordIds.value.filter(id => validIds.has(id))
+  } catch (error) {
+    ElMessage.error(error?.response?.data?.detail || '错题加载失败')
+  } finally {
+    wrongLoading.value = false
+  }
+}
 
 // 按时间段生成错题卷配置
 const periodPreset = ref(3)
@@ -403,6 +509,7 @@ const periodDifficulties = ref([])
 const periodTypeTotal = computed(() => Object.values(periodTypeCounts).reduce((a, b) => a + (b || 0), 0))
 const periodLoading = ref(false)
 const periodLastResult = ref(null)
+const recentGeneratedResult = ref(null)
 
 function setPeriodPreset(days) {
   periodPreset.value = days
@@ -443,6 +550,7 @@ async function handleGenerateWrongPeriod() {
 
     const res = await generateWrongPeriodSheet(params)
     periodLastResult.value = res
+    recentGeneratedResult.value = null
     ElMessage.success(`已生成 ${res.sheet_count} 张错题卷，共 ${res.total_count} 题`)
     // 设置最后一张为当前下载目标（取第一卷）
     if (res.sheets?.length) {
@@ -501,6 +609,8 @@ async function handleGenerateSmartRedo() {
     if (smartRedoEndDate.value) params.end_date = smartRedoEndDate.value
 
     const res = await generateSmartRedoSheet(params)
+    periodLastResult.value = null
+    recentGeneratedResult.value = null
     lastSheet.value = res
     ElMessage.success(`智慧推荐题单已生成！共 ${res.total_questions} 题，预计 ${res.estimated_time} 分钟`)
     await loadSheets()
@@ -534,7 +644,7 @@ async function handleGenerateWeek() {
 
 async function downloadDayPdf(ds) {
   try {
-    await generatePdf(ds.sheet.sheet_name || ds.day_label, ds.sheet.questions || [])
+    await generatePdf(ds.sheet.sheet_name || ds.day_label, ds.sheet.questions || [], null, 'student')
   } catch (e) {
     ElMessage.error('PDF生成失败')
   }
@@ -544,7 +654,7 @@ async function downloadAllWeekPdf() {
   if (!weekData.value) return
   for (const ds of weekData.value.sheets) {
     try {
-      await generatePdf(ds.sheet.sheet_name || ds.day_label, ds.sheet.questions || [])
+      await generatePdf(ds.sheet.sheet_name || ds.day_label, ds.sheet.questions || [], null, 'student')
     } catch (e) {
       console.error(e)
     }
@@ -589,14 +699,47 @@ async function handleGenerate() {
     const params = { ...form, knowledge_group_counts }
     if (!params.sheet_name) params.sheet_name = undefined
     const res = await generateSheet(params)
+    periodLastResult.value = null
+    recentGeneratedResult.value = null
     lastSheet.value = res
     ElMessage.success(`练习单已生成！共 ${res.total_questions} 题，预计 ${res.estimated_time} 分钟`)
     await loadSheets()
   } finally { genLoading.value = false }
 }
 
+async function handleGenerateSelectedWrong() {
+  if (!selectedWrongRecordIds.value.length) {
+    ElMessage.warning('请先勾选要练习的错题')
+    return
+  }
+  selectedWrongLoading.value = true
+  try {
+    const modeMap = {
+      wrong_original: 'original',
+      wrong_similar: 'similar',
+      wrong_mixed: 'mixed',
+    }
+    const res = await generateSelectedWrongSheet({
+      name: form.sheet_name || undefined,
+      record_ids: selectedWrongRecordIds.value,
+      mode: modeMap[generationMode.value] || 'mixed',
+      similar_per_wrong: generationMode.value === 'wrong_original' ? 0 : similarPerWrong.value,
+    })
+    periodLastResult.value = null
+    recentGeneratedResult.value = null
+    lastSheet.value = res
+    const source = res._source_summary || {}
+    ElMessage.success(`错题练习单已生成：原题 ${source.original_count || 0} 道，举一反三 ${source.similar_count || 0} 道`)
+    await loadSheets()
+  } catch (error) {
+    ElMessage.error(error?.response?.data?.detail || '错题练习单生成失败')
+  } finally {
+    selectedWrongLoading.value = false
+  }
+}
+
 	// ===== PDF 下载 =====
-async function downloadSheetAction(row) {
+async function downloadSheetAction(row, mode = 'both') {
   try {
     ElMessage.info('正在生成PDF...')
     let sheetData, questions, sections, wrongInfo
@@ -618,22 +761,26 @@ async function downloadSheetAction(row) {
         _wrongInfo: wrongInfo[q.question_id] || null,
       }))
     }
-    await generatePdf(sheetData.sheet_name || `练习单_${row.sheet_id}`, questions, sections)
+    await generatePdf(sheetData.sheet_name || `练习单_${row.sheet_id}`, questions, sections, mode)
   } catch (e) {
     ElMessage.error('PDF生成失败')
     console.error(e)
   }
 }
 
-function downloadCurrent() {
-  if (viewData.value) downloadSheetAction(viewData.value)
-  else if (lastSheet.value) downloadSheetAction(lastSheet.value)
+function downloadCurrent(mode = 'both') {
+  if (viewData.value) downloadSheetAction(viewData.value, mode)
+  else if (lastSheet.value) downloadSheetAction(lastSheet.value, mode)
 }
 
-async function downloadOneSheet(sheetData) {
+async function downloadOneSheet(sheetData, mode = 'both') {
   try {
     ElMessage.info('正在生成PDF...')
-    await generatePdf(sheetData.sheet_name || '练习单', sheetData.questions || [], sheetData._sections || null)
+    let fullSheet = sheetData
+    if (!fullSheet.questions?.length && fullSheet.sheet_id) {
+      fullSheet = await getSheet(fullSheet.sheet_id)
+    }
+    await generatePdf(fullSheet.sheet_name || '练习单', fullSheet.questions || [], fullSheet._sections || null, mode)
   } catch (e) {
     ElMessage.error('PDF生成失败')
   }
@@ -705,6 +852,13 @@ function renderFractions(text) {
   return result
 }
 
+function normalizePdfText(text) {
+  if (!text) return ''
+  return String(text)
+    .replace(/\\n/g, '\n')
+    .replace(/\\t/g, '  ')
+}
+
 function getTypeLabel(q) {
   if (!q.question_type) return ''
   const map = { 'fill_blank': '填空', 'choice': '选择', 'calculation': '计算', 'problem_solving': '解决问题', 'other': '其他' }
@@ -743,8 +897,8 @@ function buildQuestionHtml(q, index) {
   }
 
   // 题目正文（带公式渲染）
-  const renderedText = renderFractions(renderMath(q.question_text))
-  html += `<div style="white-space:pre-wrap;padding:10px 14px;background:#fafafa;border-radius:4px;line-height:1.8;font-size:15px">${renderedText}</div>`
+  const renderedText = renderFractions(renderMath(normalizePdfText(q.question_text)))
+  html += `<div style="white-space:pre-wrap;word-break:break-word;overflow-wrap:anywhere;padding:12px 16px;background:#fafafa;border-radius:4px;line-height:1.9;font-size:17px">${renderedText}</div>`
 
   // 图片
   if (q.has_image && q.image_path) {
@@ -782,10 +936,10 @@ function buildAnswerHtml(q, index) {
   html += `<div style="font-weight:bold;font-size:13.5px;margin-bottom:4px">第 ${index + 1} 题`
   if (q.knowledge_point) html += ` <span style="font-weight:normal;font-size:12px;color:#666">[${escapeHtml(q.knowledge_point)}]</span>`
   html += `</div>`
-  html += `<div style="font-size:13px;line-height:1.7">`
-  html += `<strong>答案：</strong>${renderFractions(renderMath(q.answer || '待补充'))}`
+  html += `<div style="font-size:15px;line-height:1.8;white-space:pre-wrap;word-break:break-word;overflow-wrap:anywhere">`
+  html += `<strong>答案：</strong>${renderFractions(renderMath(normalizePdfText(q.answer || '待补充')))}`
   if (q.solution) {
-    html += `<br><strong>解析：</strong>${renderFractions(renderMath(q.solution))}`
+    html += `<br><strong>解析：</strong>${renderFractions(renderMath(normalizePdfText(q.solution)))}`
   }
   html += `</div></div>`
   return html
@@ -794,10 +948,10 @@ function buildAnswerHtml(q, index) {
 async function renderSegment(htmlContent) {
   const container = document.createElement('div')
   container.style.cssText = `
-    width: 794px;
-    padding: 0 56px;
+    width: 680px;
+    padding: 0;
     font-family: 'SimSun', 'STSong', 'Noto Serif CJK SC', serif;
-    font-size: 14px;
+    font-size: 17px;
     line-height: 1.8;
     color: #333;
     background: #fff;
@@ -833,6 +987,8 @@ async function renderToPdf(segments, filename) {
   const pdfH = pdf.internal.pageSize.getHeight()
   const TOP_MARGIN = 20
   const BOTTOM_MARGIN = 15
+  const SIDE_MARGIN = 10
+  const CONTENT_W = pdfW - SIDE_MARGIN * 2
 
   let yPos = TOP_MARGIN
 
@@ -840,7 +996,7 @@ async function renderToPdf(segments, filename) {
     const canvas = await renderSegment(html)
     const imgData = canvas.toDataURL('image/png')
 
-    const ratio = pdfW / canvas.width
+    const ratio = CONTENT_W / canvas.width
     const segH = canvas.height * ratio
 
     // 如果当前段超出底部边距，换页
@@ -849,14 +1005,14 @@ async function renderToPdf(segments, filename) {
       yPos = TOP_MARGIN
     }
 
-    pdf.addImage(imgData, 'PNG', 0, yPos, pdfW, segH)
+    pdf.addImage(imgData, 'PNG', SIDE_MARGIN, yPos, CONTENT_W, segH)
     yPos += segH
   }
 
   pdf.save(`${filename}.pdf`)
 }
 
-async function generatePdf(sheetName, questions, sections) {
+async function generatePdf(sheetName, questions, sections, mode = 'both') {
   if (!questions || !questions.length) {
     ElMessage.warning('没有题目可供生成PDF')
     return
@@ -943,12 +1099,16 @@ async function generatePdf(sheetName, questions, sections) {
   })
 
   try {
-    ElMessage.info('正在生成学生卷PDF...')
-    await renderToPdf(studentSegments, `${safeName}_学生卷`)
-    ElMessage.success('学生卷下载完成')
-    ElMessage.info('正在生成答案卷PDF...')
-    await renderToPdf(answerSegments, `${safeName}_答案卷`)
-    ElMessage.success('答案卷下载完成')
+    if (mode === 'student' || mode === 'both') {
+      ElMessage.info('正在生成试卷PDF...')
+      await renderToPdf(studentSegments, `${safeName}_试卷`)
+      ElMessage.success('试卷下载完成')
+    }
+    if (mode === 'answer' || mode === 'both') {
+      ElMessage.info('正在生成答案PDF...')
+      await renderToPdf(answerSegments, `${safeName}_答案`)
+      ElMessage.success('答案下载完成')
+    }
   } catch (e) {
     ElMessage.error('PDF生成失败')
     console.error(e)
@@ -1035,6 +1195,11 @@ function openAIDialog() {
 function onAIGenerated(result) {
   // AI生成完成后，刷新练习单列表
   showAIDialog.value = false
+  periodLastResult.value = null
+  recentGeneratedResult.value = result
+  if (result.sheets?.length) {
+    lastSheet.value = result.sheets[0]
+  }
   loadSheets()
   ElMessage.success(`AI练习单已生成 ${result.created_count || 0} 套`)
 }

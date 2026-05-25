@@ -176,6 +176,14 @@ class SmartRedoRequest(BaseModel):
     exclude_recent_days: int = 3
 
 
+class SelectedWrongPracticeRequest(BaseModel):
+    """基于用户勾选错题生成练习单"""
+    name: Optional[str] = None
+    record_ids: List[int] = Field(default_factory=list, min_length=1)
+    mode: str = "mixed"  # original | similar | mixed
+    similar_per_wrong: int = Field(1, ge=0, le=5)
+
+
 class QuestionResultOut(BaseModel):
     question_id: int
     question_order: int

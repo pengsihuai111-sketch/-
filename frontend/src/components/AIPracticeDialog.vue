@@ -375,16 +375,23 @@ const structuredDefaults = () => ({
 })
 
 const structured = reactive(structuredDefaults())
+const STORAGE_KEY = 'ai_practice_dialog_draft_v1'
 
 watch(
   () => props.modelValue,
   async (visible) => {
     if (visible) {
+      restoreDraft()
       await loadKnowledgePoints()
       return
     }
-    resetState()
   }
+)
+
+watch(
+  [prompt, structured],
+  () => saveDraft(),
+  { deep: true }
 )
 
 const categories = computed(() => Object.keys(groupedKnowledgePoints.value || {}))
@@ -435,14 +442,50 @@ function resetState() {
   supplementLoading.value = false
   replaceLoadingId.value = ''
   previewData.value = null
-  prompt.value = ''
   sheetName.value = ''
   variants.value = []
   activeVariantId.value = ''
-  resetStructured()
+}
+
+function saveDraft() {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({
+      prompt: prompt.value,
+      structured: JSON.parse(JSON.stringify(structured)),
+    }))
+  } catch {
+    // localStorage may be unavailable in private browsing.
+  }
+}
+
+function restoreDraft() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY)
+    if (!raw) return
+    const parsed = JSON.parse(raw)
+    if (typeof parsed.prompt === 'string') {
+      prompt.value = parsed.prompt
+    }
+    if (parsed.structured && typeof parsed.structured === 'object') {
+      const defaults = structuredDefaults()
+      Object.keys(defaults).forEach((key) => {
+        if (parsed.structured[key] === undefined) return
+        if (typeof defaults[key] === 'object' && defaults[key] !== null) {
+          structured[key] = Array.isArray(defaults[key])
+            ? [...parsed.structured[key]]
+            : { ...defaults[key], ...parsed.structured[key] }
+          return
+        }
+        structured[key] = parsed.structured[key]
+      })
+    }
+  } catch {
+    // Ignore malformed drafts.
+  }
 }
 
 function handleClose() {
+  resetState()
   emit('update:modelValue', false)
 }
 

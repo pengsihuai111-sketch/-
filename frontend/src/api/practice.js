@@ -20,6 +20,10 @@ export function generateSmartRedoSheet(data) {
   return request.post('/practice/generate-smart-redo', data)
 }
 
+export function generateSelectedWrongSheet(data) {
+  return request.post('/practice/generate-selected-wrongs', data)
+}
+
 export function listSheets() {
   return request.get('/practice/sheets')
 }
