@@ -80,24 +80,26 @@ class AIConfig:
     DEEPSEEK_API_URL: str = _get_optional_env("DEEPSEEK_API_URL", "https://api.deepseek.com/chat/completions")
     DEEPSEEK_MODEL: str = _get_optional_env("DEEPSEEK_MODEL", "deepseek-chat")
 
-    # Doubao配置（主要文本模型）
-    DOUBAO_API_KEY: str = _get_required_env("DOUBAO_API_KEY")
-    DOUBAO_API_URL: str = _get_optional_env("DOUBAO_API_URL", "https://api.newcoin.tech/v1/chat/completions")
-    DOUBAO_MODEL: str = _get_optional_env("DOUBAO_MODEL", "doubao-seed-1-6-251015")
+    # 智谱AI配置（主要文本模型）
+    ZHIPU_API_KEY: str = _get_required_env("ZHIPU_API_KEY")
+    ZHIPU_API_URL: str = _get_optional_env("ZHIPU_API_URL", "https://open.bigmodel.cn/api/paas/v4/chat/completions")
+    ZHIPU_MODEL: str = _get_optional_env("ZHIPU_MODEL", "glm-4-flash")
 
     # Vision模型配置
     VISION_API_KEY: str = _get_required_env("VISION_API_KEY")
-    VISION_API_URL: str = _get_optional_env("VISION_API_URL", "https://api.newcoin.tech/v1/chat/completions")
-    VISION_MODEL: str = _get_optional_env("VISION_MODEL", "doubao-seed-1-6-vision-250815")
+    VISION_API_URL: str = _get_optional_env("VISION_API_URL", "https://open.bigmodel.cn/api/paas/v4/chat/completions")
+    VISION_MODEL: str = _get_optional_env("VISION_MODEL", "glm-4v-flash")
 
     # 文本模型提供商选择
-    TEXT_LLM_PROVIDER: str = _get_optional_env("TEXT_LLM_PROVIDER", "doubao")
+    TEXT_LLM_PROVIDER: str = _get_optional_env("TEXT_LLM_PROVIDER", "zhipu")
 
     @classmethod
     def validate(cls):
         """验证AI配置完整性"""
         if cls.TEXT_LLM_PROVIDER == "deepseek" and not cls.DEEPSEEK_API_KEY:
             raise ConfigError("TEXT_LLM_PROVIDER设置为deepseek，但DEEPSEEK_API_KEY未配置")
+        if cls.TEXT_LLM_PROVIDER == "zhipu" and not cls.ZHIPU_API_KEY:
+            raise ConfigError("TEXT_LLM_PROVIDER设置为zhipu，但ZHIPU_API_KEY未配置")
 
 
 # CORS配置
@@ -136,9 +138,14 @@ DEEPSEEK_API_KEY = AIConfig.DEEPSEEK_API_KEY or ""
 DEEPSEEK_API_URL = AIConfig.DEEPSEEK_API_URL
 DEEPSEEK_MODEL = AIConfig.DEEPSEEK_MODEL
 
-DOUBAO_API_KEY = AIConfig.DOUBAO_API_KEY
-DOUBAO_API_URL = AIConfig.DOUBAO_API_URL
-DOUBAO_MODEL = AIConfig.DOUBAO_MODEL
+ZHIPU_API_KEY = AIConfig.ZHIPU_API_KEY
+ZHIPU_API_URL = AIConfig.ZHIPU_API_URL
+ZHIPU_MODEL = AIConfig.ZHIPU_MODEL
+
+# 向后兼容：保留旧的DOUBAO变量名
+DOUBAO_API_KEY = AIConfig.ZHIPU_API_KEY
+DOUBAO_API_URL = AIConfig.ZHIPU_API_URL
+DOUBAO_MODEL = AIConfig.ZHIPU_MODEL
 
 VISION_API_KEY = AIConfig.VISION_API_KEY
 VISION_API_URL = AIConfig.VISION_API_URL

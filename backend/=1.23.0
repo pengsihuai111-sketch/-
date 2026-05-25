@@ -1,0 +1,6 @@
+Defaulting to user installation because normal site-packages is not writeable
+Collecting PyMuPDF
+  Using cached pymupdf-1.27.2.3-cp310-abi3-win_amd64.whl.metadata (24 kB)
+Using cached pymupdf-1.27.2.3-cp310-abi3-win_amd64.whl (19.2 MB)
+Installing collected packages: PyMuPDF
+Successfully installed PyMuPDF-1.27.2.3

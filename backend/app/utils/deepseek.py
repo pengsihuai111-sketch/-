@@ -1,7 +1,7 @@
 """
 Question recognition, answer generation, and deduplication.
 
-All text and vision tasks use the configured LLM provider (Doubao)
+All text and vision tasks use the configured LLM provider (Zhipu AI / GLM)
 via OpenAI-compatible API format. The single model handles both
 text-only tasks (answer generation, matching) and multimodal tasks
 (image recognition with text prompts).
@@ -25,7 +25,7 @@ from rapidocr_onnxruntime import RapidOCR
 
 from ..config import (
     DEEPSEEK_API_KEY, DEEPSEEK_API_URL, DEEPSEEK_MODEL,
-    DOUBAO_API_KEY, DOUBAO_API_URL, DOUBAO_MODEL,
+    ZHIPU_API_KEY, ZHIPU_API_URL, ZHIPU_MODEL,
     VISION_API_KEY, VISION_API_URL, VISION_MODEL,
     TEXT_LLM_PROVIDER,
 )
@@ -51,11 +51,11 @@ _rapid_ocr_engine = None
 def _get_text_llm_config() -> dict:
     """Get text LLM config based on TEXT_LLM_PROVIDER."""
     provider = TEXT_LLM_PROVIDER.lower()
-    if provider == "doubao":
+    if provider == "zhipu":
         return {
-            "api_key": DOUBAO_API_KEY,
-            "api_url": DOUBAO_API_URL,
-            "model": DOUBAO_MODEL,
+            "api_key": ZHIPU_API_KEY,
+            "api_url": ZHIPU_API_URL,
+            "model": ZHIPU_MODEL,
         }
     # default: deepseek
     return {
@@ -72,7 +72,7 @@ async def _call_text_llm(
     timeout: float = 180.0,
     json_output: bool = False,
 ) -> str:
-    """Unified text LLM caller — supports DeepSeek and Doubao."""
+    """Unified text LLM caller — supports DeepSeek and Zhipu AI."""
     config = _get_text_llm_config()
     api_key = config["api_key"]
     if not api_key:
@@ -138,8 +138,8 @@ async def _call_multimodal_llm(
 ) -> str:
     """Call LLM with image input using OpenAI-compatible format.
 
-    Uses the VISION model config (Doubao vision model).
-    NOTE: Doubao vision API does NOT support 'system' role messages,
+    Uses the VISION model config (Zhipu AI vision model - GLM-4V).
+    NOTE: GLM vision API does NOT support 'system' role messages,
     so system_prompt is merged into the user message text.
     """
     api_key = VISION_API_KEY
@@ -984,7 +984,7 @@ async def _call_vision_api_fallback(image_bytes: bytes, filename: str) -> List[d
 async def _call_deepseek_text(text: str) -> List[dict]:
     """Send extracted text to text LLM for structuring into question format.
 
-    Uses the configured text LLM provider (DeepSeek or Doubao).
+    Uses the configured text LLM provider (DeepSeek or Zhipu AI).
     """
     system_prompt = VISION_SYSTEM_PROMPT.replace(
         "Analyze the image and extract all questions.",
@@ -1204,7 +1204,7 @@ JSON 格式：
 async def analyze_page_structure(image_bytes: bytes, filename: str = "") -> dict:
     """Analyze a page image to detect questions, correction marks, and layout.
 
-    Uses the multimodal LLM (Doubao) to return structured info about the page.
+    Uses the multimodal LLM (Zhipu AI GLM-4V) to return structured info about the page.
     Returns parsed dict with image_type, questions list, etc.
     """
     try:
@@ -1240,7 +1240,7 @@ async def analyze_page_structure(image_bytes: bytes, filename: str = "") -> dict
 async def recognize_single_question(image_bytes: bytes, question_no: str = "") -> dict:
     """Recognize a single question from a cropped image region.
 
-    Uses the multimodal LLM (Doubao) with a prompt tailored for corrected papers.
+    Uses the multimodal LLM (Zhipu AI GLM-4V) with a prompt tailored for corrected papers.
     Returns dict with question_text, question_type, etc.
     """
     try:
