@@ -867,33 +867,28 @@ def _recommend_similar_questions(db, user_id, source_questions, count, exclude_i
     top_kps = [kp for kp, _ in sorted(kp_counts.items(), key=lambda x: -x[1])]
     top_cats = [ct for ct, _ in sorted(cat_counts.items(), key=lambda x: -x[1])]
 
-    wrong_qids = set()
-    for r in db.query(UserWrongQuestion.question_id).filter(
-        UserWrongQuestion.user_id == user_id
-    ).all():
-        wrong_qids.add(r[0])
-    if exclude_ids:
-        wrong_qids.update(exclude_ids)
+    blocked_qids = set(exclude_ids or [])
+    blocked_qids.update(q.question_id for q in source_questions if q.question_id)
 
     candidates = []
     if top_kps:
         candidates = db.query(Question).filter(
             Question.knowledge_point.in_(top_kps),
-            Question.question_id.notin_(wrong_qids),
+            Question.question_id.notin_(blocked_qids),
         ).all()
 
     if len(candidates) < count and top_cats:
         existing = {q.question_id for q in candidates}
         more = db.query(Question).filter(
             Question.knowledge_category.in_(top_cats),
-            Question.question_id.notin_(wrong_qids | existing),
+            Question.question_id.notin_(blocked_qids | existing),
         ).all()
         candidates.extend(more)
 
     if len(candidates) < count:
         existing = {q.question_id for q in candidates}
         more = db.query(Question).filter(
-            Question.question_id.notin_(wrong_qids | existing),
+            Question.question_id.notin_(blocked_qids | existing),
         ).limit(count * 3).all()
         candidates.extend(more)
 
@@ -1306,33 +1301,53 @@ def generate_selected_wrong_sheet(
 
     record_order = {record_id: index for index, record_id in enumerate(req.record_ids)}
     records.sort(key=lambda item: record_order.get(item.record_id, 9999))
-    original_questions = []
+    record_question_pairs = []
     for record in records:
         question = db.query(Question).filter(Question.question_id == record.question_id).first()
         if question:
-            original_questions.append(question)
+            record_question_pairs.append((record, question))
 
-    if not original_questions:
+    if not record_question_pairs:
         raise HTTPException(status_code=400, detail="所选错题没有对应题目")
 
+    original_questions = [question for _, question in record_question_pairs]
     selected = []
     sections_data = []
+    source_map = []
     used_ids = set()
     if mode in {"original", "mixed"}:
         selected.extend(original_questions)
         used_ids.update(q.question_id for q in original_questions)
+        source_map.extend([
+            {
+                "question_id": question.question_id,
+                "source": "wrong_original",
+                "source_wrong_question_id": question.question_id,
+                "source_record_id": record.record_id,
+            }
+            for record, question in record_question_pairs
+        ])
         sections_data.append({"label": "一、错题原题重练", "start": 0, "count": len(original_questions)})
 
     similar_questions = []
     if mode in {"similar", "mixed"} and req.similar_per_wrong > 0:
-        similar_count = len(original_questions) * req.similar_per_wrong
-        similar_questions = _recommend_similar_questions(
-            db,
-            user_id,
-            original_questions,
-            similar_count,
-            exclude_ids=used_ids,
-        )
+        for record, source_question in record_question_pairs:
+            recommendations = _recommend_similar_questions(
+                db,
+                user_id,
+                [source_question],
+                req.similar_per_wrong,
+                exclude_ids=used_ids,
+            )
+            for recommendation in recommendations:
+                similar_questions.append(recommendation)
+                used_ids.add(recommendation.question_id)
+                source_map.append({
+                    "question_id": recommendation.question_id,
+                    "source": "similar_existing",
+                    "source_wrong_question_id": source_question.question_id,
+                    "source_record_id": record.record_id,
+                })
         if similar_questions:
             sections_data.append({
                 "label": "二、举一反三迁移练习" if sections_data else "一、举一反三迁移练习",
@@ -1340,7 +1355,6 @@ def generate_selected_wrong_sheet(
                 "count": len(similar_questions),
             })
             selected.extend(similar_questions)
-            used_ids.update(q.question_id for q in similar_questions)
 
     if not selected:
         raise HTTPException(status_code=400, detail="没有可生成的练习题")
@@ -1390,6 +1404,7 @@ def generate_selected_wrong_sheet(
         "similar_count": len(similar_questions),
         "selected_wrong_count": len(original_questions),
     }
+    data["_source_map"] = source_map
     return data
 
 
@@ -1420,6 +1435,13 @@ def mark_sheet_complete(
     sq_map = {sq.question_id: sq for sq in sqs}
 
     mark_map = {m.question_id: m for m in req.marks}
+    missing_question_ids = [sq.question_id for sq in sqs if sq.question_id not in mark_map]
+    if missing_question_ids:
+        raise HTTPException(
+            status_code=400,
+            detail=f"还有 {len(missing_question_ids)} 道题未标记，请全部标记后再提交",
+        )
+
     correct_count = 0
     wrong_ids = []
 
@@ -1428,8 +1450,8 @@ def mark_sheet_complete(
         if not q:
             continue
 
-        mark = mark_map.get(q.question_id)
-        is_correct = mark.is_correct if mark else False
+        mark = mark_map[q.question_id]
+        is_correct = mark.is_correct
 
         if is_correct:
             correct_count += 1

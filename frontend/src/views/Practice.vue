@@ -150,137 +150,6 @@
               <el-form-item>
                 <el-button type="success" style="width: 100%" @click="openAIDialog">🤖 AI智能生成</el-button>
               </el-form-item>
-              <template v-if="generationMode === 'legacy_wrong_redo'">
-                <el-divider border-style="dashed" />
-
-                <!-- 按时间段生成多卷错题练习 -->
-                <div style="margin-bottom: 12px;font-weight:bold;font-size:14px;color:#E67E22">按时间段生成错题卷</div>
-
-                <div style="margin-bottom: 12px;padding:10px 12px;background:#f9f9f9;border-radius:6px;border:1px solid #eee">
-                  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-                    <span style="font-weight:bold;font-size:13px">时间范围</span>
-                    <div style="display:flex;gap:4px">
-                      <el-button :type="periodPreset === 3 ? 'primary' : 'default'" size="small" @click="setPeriodPreset(3)">近3天</el-button>
-                      <el-button :type="periodPreset === 7 ? 'primary' : 'default'" size="small" @click="setPeriodPreset(7)">近7天</el-button>
-                      <el-button :type="periodPreset === 30 ? 'primary' : 'default'" size="small" @click="setPeriodPreset(30)">近30天</el-button>
-                      <el-button :type="periodPreset === 0 ? 'primary' : 'default'" size="small" @click="setPeriodPreset(0)">全部</el-button>
-                    </div>
-                  </div>
-                  <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px">
-                    <el-date-picker v-model="periodStartDate" type="date" placeholder="开始日期" size="small" value-format="YYYY-MM-DD" style="width:140px" />
-                    <span>至</span>
-                    <el-date-picker v-model="periodEndDate" type="date" placeholder="结束日期" size="small" value-format="YYYY-MM-DD" style="width:140px" />
-                  </div>
-                  <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">
-                    <div style="display:flex;align-items:center;gap:6px">
-                      <span style="font-size:13px;color:#606266">生成份数：</span>
-                      <el-input-number v-model="periodSheetCount" :min="1" :max="10" size="small" controls-position="right" style="width:100px" />
-                    </div>
-                    <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
-                      <span style="font-size:13px;color:#606266">每卷各题型数量：</span>
-                      <div style="display:flex;gap:8px;align-items:center">
-                        <div><span style="font-size:12px">计算</span><el-input-number v-model="periodTypeCounts.calculation" :min="0" :max="20" size="small" controls-position="right" style="width:90px" /></div>
-                        <div><span style="font-size:12px">填空</span><el-input-number v-model="periodTypeCounts.fill_blank" :min="0" :max="20" size="small" controls-position="right" style="width:90px" /></div>
-                        <div><span style="font-size:12px">选择</span><el-input-number v-model="periodTypeCounts.choice" :min="0" :max="20" size="small" controls-position="right" style="width:90px" /></div>
-                        <div><span style="font-size:12px">应用</span><el-input-number v-model="periodTypeCounts.problem_solving" :min="0" :max="20" size="small" controls-position="right" style="width:90px" /></div>
-                      </div>
-                      <span v-if="periodTypeTotal > 0 && periodSheetCount > 0" style="font-size:12px;color:#909399">每卷 {{ periodTypeTotal }} 题，共 {{ periodSheetCount * periodTypeTotal }} 题</span>
-                    </div>
-                    <div style="display:flex;align-items:center;gap:6px">
-                      <span style="font-size:13px;color:#606266">题型筛选：</span>
-                      <el-checkbox-group v-model="periodQuestionTypes" size="small">
-                        <el-checkbox label="calculation">计算</el-checkbox>
-                        <el-checkbox label="fill_blank">填空</el-checkbox>
-                        <el-checkbox label="choice">选择</el-checkbox>
-                        <el-checkbox label="problem_solving">应用</el-checkbox>
-                      </el-checkbox-group>
-                    </div>
-                    <div style="display:flex;align-items:center;gap:6px">
-                      <span style="font-size:13px;color:#606266">难度：</span>
-                      <el-checkbox-group v-model="periodDifficulties" size="small">
-                        <el-checkbox label="基础" />
-                        <el-checkbox label="中等" />
-                        <el-checkbox label="挑战" />
-                      </el-checkbox-group>
-                    </div>
-                  </div>
-                  <div style="margin-top:10px">
-                    <el-button type="warning" size="small" @click="handleGenerateWrongPeriod" :loading="periodLoading">生成错题卷（共 {{ periodSheetCount }} 份）</el-button>
-                    <span v-if="periodLastResult" style="margin-left:12px;font-size:12px;color:#909399">
-                      上次：{{ periodLastResult.total_count }} 题，生成 {{ periodLastResult.sheet_count }} 卷
-                    </span>
-                  </div>
-                </div>
-
-                <el-divider border-style="dashed" />
-
-                <div style="margin-bottom: 12px;font-weight:bold;font-size:14px;color:#10B981">智慧推荐错题重练</div>
-
-                <!-- 时间段筛选 -->
-                <div style="margin-bottom: 12px;padding:10px 12px;background:#f9f9f9;border-radius:6px;border:1px solid #eee">
-                  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-                    <span style="font-weight:bold;font-size:13px">错题时间范围</span>
-                    <div style="display:flex;gap:4px">
-                      <el-button :type="smartRedoPeriod === 7 ? 'primary' : 'default'" size="small" @click="setSmartRedoPeriod(7)">近7天</el-button>
-                      <el-button :type="smartRedoPeriod === 30 ? 'primary' : 'default'" size="small" @click="setSmartRedoPeriod(30)">近30天</el-button>
-                      <el-button :type="smartRedoPeriod === 0 ? 'primary' : 'default'" size="small" @click="setSmartRedoPeriod(0)">全部</el-button>
-                    </div>
-                  </div>
-                  <div style="display:flex;gap:8px;align-items:center">
-                    <el-date-picker v-model="smartRedoStartDate" type="date" placeholder="开始日期" size="small" value-format="YYYY-MM-DD" style="width:140px" />
-                    <span>至</span>
-                    <el-date-picker v-model="smartRedoEndDate" type="date" placeholder="结束日期" size="small" value-format="YYYY-MM-DD" style="width:140px" />
-                  </div>
-                </div>
-
-                <!-- 数量配置 -->
-                <div style="margin-bottom: 12px;padding:10px 12px;background:#f9f9f9;border-radius:6px;border:1px solid #eee">
-                  <div style="font-weight:bold;font-size:13px;margin-bottom:8px">题目数量配置</div>
-                  <el-row :gutter="12">
-                    <el-col :span="8">
-                      <el-form-item label="计算题">
-                        <el-input-number v-model="smartRedoCalcCount" :min="0" :max="10" size="small" controls-position="right" style="width:100%" />
-                      </el-form-item>
-                    </el-col>
-                    <el-col :span="8">
-                      <el-form-item label="原错题">
-                        <el-input-number v-model="smartRedoWrongCount" :min="0" :max="20" size="small" controls-position="right" style="width:100%" />
-                      </el-form-item>
-                    </el-col>
-                    <el-col :span="8">
-                      <el-form-item label="举一反三">
-                        <el-input-number v-model="smartRedoSimilarCount" :min="0" :max="10" size="small" controls-position="right" style="width:100%" />
-                      </el-form-item>
-                    </el-col>
-                  </el-row>
-                </div>
-
-                <!-- 题型筛选 -->
-                <div style="margin-bottom: 12px;padding:10px 12px;background:#f9f9f9;border-radius:6px;border:1px solid #eee">
-                  <div style="font-weight:bold;font-size:13px;margin-bottom:6px">题型筛选（留空表示不限）</div>
-                  <el-checkbox-group v-model="smartRedoQuestionTypes">
-                    <el-checkbox label="calculation">计算题</el-checkbox>
-                    <el-checkbox label="fill_blank">填空题</el-checkbox>
-                    <el-checkbox label="choice">选择题</el-checkbox>
-                    <el-checkbox label="problem_solving">应用题</el-checkbox>
-                  </el-checkbox-group>
-                </div>
-
-                <!-- 推荐策略 -->
-                <div style="margin-bottom: 12px;padding:10px 12px;background:#f9f9f9;border-radius:6px;border:1px solid #eee">
-                  <div style="font-weight:bold;font-size:13px;margin-bottom:6px">推荐策略</div>
-                  <el-radio-group v-model="smartRedoStrategy" size="small">
-                    <el-radio value="smart">智慧推荐</el-radio>
-                    <el-radio value="latest">最新错题</el-radio>
-                    <el-radio value="weak_knowledge">薄弱知识点</el-radio>
-                    <el-radio value="forgetting_risk">遗忘风险</el-radio>
-                  </el-radio-group>
-                </div>
-
-                <el-form-item>
-                  <el-button type="warning" style="width: 100%" @click="handleGenerateSmartRedo" :loading="smartLoading">生成智慧错题重练</el-button>
-                </el-form-item>
-              </template>
             </el-form>
           </el-card>
 
@@ -438,7 +307,7 @@
 
 <script setup>
 import { ref, reactive, computed, onMounted } from 'vue'
-import { generateSheet, listSheets, getSheet, deleteSheet, generateWeekSheets, completeSheet, generateSmartRedoSheet, generateWrongPeriodSheet, generateSelectedWrongSheet, listWrongQuestions } from '../api/practice'
+import { generateSheet, listSheets, getSheet, deleteSheet, generateWeekSheets, completeSheet, generateSelectedWrongSheet, listWrongQuestions } from '../api/practice'
 import { listKnowledgePoints } from '../api/question'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Loading } from '@element-plus/icons-vue'
@@ -458,7 +327,6 @@ const genLoading = ref(false)
 const lastSheet = ref(null)
 const weekData = ref(null)
 const weekLoading = ref(false)
-const smartLoading = ref(false)
 const wrongLoading = ref(false)
 const selectedWrongLoading = ref(false)
 const wrongOptions = ref([])
@@ -483,8 +351,19 @@ function truncateWrongText(text) {
 async function loadWrongQuestionOptions() {
   wrongLoading.value = true
   try {
-    const res = await listWrongQuestions({ page: 1, page_size: 100 })
-    let items = res.wrong_questions || []
+    const pageSize = 100
+    let page = 1
+    let total = 0
+    const allItems = []
+    do {
+      const res = await listWrongQuestions({ page, page_size: pageSize })
+      const pageItems = res.wrong_questions || []
+      allItems.push(...pageItems)
+      total = Number(res.total || allItems.length)
+      if (!pageItems.length) break
+      page += 1
+    } while (allItems.length < total)
+    let items = allItems
     if (wrongOnlyUnmastered.value) {
       items = items.filter(item => !item.mastered)
     }
@@ -498,128 +377,8 @@ async function loadWrongQuestionOptions() {
   }
 }
 
-// 按时间段生成错题卷配置
-const periodPreset = ref(3)
-const periodStartDate = ref(new Date(Date.now() - 3 * 86400000).toISOString().split('T')[0])
-const periodEndDate = ref(new Date().toISOString().split('T')[0])
-const periodSheetCount = ref(3)
-const periodTypeCounts = reactive({ calculation: 4, fill_blank: 3, choice: 0, problem_solving: 3 })
-const periodQuestionTypes = ref([])
-const periodDifficulties = ref([])
-const periodTypeTotal = computed(() => Object.values(periodTypeCounts).reduce((a, b) => a + (b || 0), 0))
-const periodLoading = ref(false)
 const periodLastResult = ref(null)
 const recentGeneratedResult = ref(null)
-
-function setPeriodPreset(days) {
-  periodPreset.value = days
-  if (days === 0) {
-    periodStartDate.value = null
-    periodEndDate.value = null
-  } else {
-    const end = new Date()
-    const start = new Date()
-    start.setDate(start.getDate() - days)
-    periodStartDate.value = start.toISOString().split('T')[0]
-    periodEndDate.value = end.toISOString().split('T')[0]
-  }
-}
-
-async function handleGenerateWrongPeriod() {
-  if (!periodStartDate.value || !periodEndDate.value) {
-    ElMessage.warning('请选择时间范围')
-    return
-  }
-  periodLoading.value = true
-  try {
-    const params = {
-      start_date: periodStartDate.value,
-      end_date: periodEndDate.value,
-      sheet_count: periodSheetCount.value,
-      only_unmastered: true,
-    }
-    // 传按题型数量配置（过滤掉数量为0的题型）
-    const activeTypes = Object.fromEntries(
-      Object.entries(periodTypeCounts).filter(([_, v]) => v > 0)
-    )
-    if (Object.keys(activeTypes).length) {
-      params.type_counts = activeTypes
-    }
-    if (periodQuestionTypes.value.length) params.question_types = periodQuestionTypes.value
-    if (periodDifficulties.value.length) params.difficulty = periodDifficulties.value
-
-    const res = await generateWrongPeriodSheet(params)
-    periodLastResult.value = res
-    recentGeneratedResult.value = null
-    ElMessage.success(`已生成 ${res.sheet_count} 张错题卷，共 ${res.total_count} 题`)
-    // 设置最后一张为当前下载目标（取第一卷）
-    if (res.sheets?.length) {
-      lastSheet.value = res.sheets[0]
-    }
-    await loadSheets()
-  } catch (e) {
-    // handled by interceptor
-  } finally {
-    periodLoading.value = false
-  }
-}
-
-// 智慧推荐错题重练配置
-const smartRedoPeriod = ref(30)
-const smartRedoStartDate = ref(new Date(Date.now() - 30 * 86400000).toISOString().split('T')[0])
-const smartRedoEndDate = ref(new Date().toISOString().split('T')[0])
-const smartRedoCalcCount = ref(2)
-const smartRedoWrongCount = ref(3)
-const smartRedoSimilarCount = ref(2)
-const smartRedoStrategy = ref('smart')
-const smartRedoQuestionTypes = ref([])
-
-function setSmartRedoPeriod(days) {
-  smartRedoPeriod.value = days
-  if (days === 0) {
-    smartRedoStartDate.value = null
-    smartRedoEndDate.value = null
-  } else {
-    const end = new Date()
-    const start = new Date()
-    start.setDate(start.getDate() - days)
-    smartRedoStartDate.value = start.toISOString().split('T')[0]
-    smartRedoEndDate.value = end.toISOString().split('T')[0]
-  }
-}
-
-async function handleGenerateSmartRedo() {
-  const total = smartRedoCalcCount.value + smartRedoWrongCount.value + smartRedoSimilarCount.value
-  if (total === 0) {
-    ElMessage.warning('请至少设置一种题目的数量')
-    return
-  }
-  smartLoading.value = true
-  try {
-    const params = {
-      name: form.sheet_name || undefined,
-      calculation_count: smartRedoCalcCount.value,
-      wrong_question_count: smartRedoWrongCount.value,
-      similar_question_count: smartRedoSimilarCount.value,
-      strategy: smartRedoStrategy.value,
-      only_unmastered: true,
-    }
-    if (smartRedoQuestionTypes.value.length) params.question_types = smartRedoQuestionTypes.value
-    if (smartRedoStartDate.value) params.start_date = smartRedoStartDate.value
-    if (smartRedoEndDate.value) params.end_date = smartRedoEndDate.value
-
-    const res = await generateSmartRedoSheet(params)
-    periodLastResult.value = null
-    recentGeneratedResult.value = null
-    lastSheet.value = res
-    ElMessage.success(`智慧推荐题单已生成！共 ${res.total_questions} 题，预计 ${res.estimated_time} 分钟`)
-    await loadSheets()
-  } catch (e) {
-    // handled by interceptor
-  } finally {
-    smartLoading.value = false
-  }
-}
 
 function getDayKps(sheet) {
   const kps = new Set()

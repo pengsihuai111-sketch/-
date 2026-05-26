@@ -1,14 +1,15 @@
 import { createRouter, createWebHistory } from 'vue-router'
-import Layout from '../components/Layout.vue'
-import Login from '../views/Login.vue'
-import Register from '../views/Register.vue'
-import Dashboard from '../views/Dashboard.vue'
-import Questions from '../views/Questions.vue'
-import QuestionInput from '../views/QuestionInput.vue'
-import WrongQuestions from '../views/WrongQuestions.vue'
-import Practice from '../views/Practice.vue'
-import Diagnosis from '../views/Diagnosis.vue'
-import Member from '../views/Member.vue'
+
+const Layout = () => import('../components/Layout.vue')
+const Login = () => import('../views/Login.vue')
+const Register = () => import('../views/Register.vue')
+const Dashboard = () => import('../views/Dashboard.vue')
+const Questions = () => import('../views/Questions.vue')
+const QuestionInput = () => import('../views/QuestionInput.vue')
+const WrongQuestions = () => import('../views/WrongQuestions.vue')
+const Practice = () => import('../views/Practice.vue')
+const Diagnosis = () => import('../views/Diagnosis.vue')
+const Member = () => import('../views/Member.vue')
 
 const routes = [
   { path: '/login', name: 'Login', component: Login },

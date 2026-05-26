@@ -95,11 +95,23 @@
                       :value="category" />
                   </el-select>
                 </el-form-item>
-                <el-form-item label="答案" v-if="getBlockAnswer(block)">
-                  <div class="answer-preview" v-html="renderMath(getBlockAnswer(block))" />
+                <el-form-item label="答案">
+                  <el-input
+                    v-model="block._editedAnswer"
+                    type="textarea"
+                    :rows="2"
+                    placeholder="请输入或修改答案"
+                    @input="onEditBlock(block)" />
+                  <div v-if="block._editedAnswer" class="answer-preview" v-html="renderMath(block._editedAnswer)" />
                 </el-form-item>
-                <el-form-item label="解析" v-if="getBlockSolution(block)">
-                  <div class="solution-preview" v-html="renderMath(getBlockSolution(block))" />
+                <el-form-item label="解析">
+                  <el-input
+                    v-model="block._editedSolution"
+                    type="textarea"
+                    :rows="3"
+                    placeholder="请输入或修改解析"
+                    @input="onEditBlock(block)" />
+                  <div v-if="block._editedSolution" class="solution-preview" v-html="renderMath(block._editedSolution)" />
                 </el-form-item>
                 <el-form-item label="配图">
                   <div style="display:flex;gap:8px;align-items:center">
@@ -234,11 +246,19 @@ watch(() => props.result, (val) => {
         block._editedType = block.ai_result?.question_type || 'problem_solving'
         block._editedKps = (block.ai_result?.knowledge_points || []).join(', ')
         block._editedCategory = block.ai_result?.knowledge_category || inferCategory(block)
+        block._editedAnswer = getBlockAnswer(block)
+        block._editedSolution = getBlockSolution(block)
         block._selectedMatchId = block.matched_questions?.[0]?.question_id || null
         block._showClean = false
         block._asNewQuestion = !block._selectedMatchId
         block._questionImage = null
         block._questionImagePreview = null
+      }
+      if (!('_editedAnswer' in block)) {
+        block._editedAnswer = getBlockAnswer(block)
+      }
+      if (!('_editedSolution' in block)) {
+        block._editedSolution = getBlockSolution(block)
       }
       // Store selection state separately
       blockSelections.value.set(block.block_id, true)
@@ -278,11 +298,11 @@ const totalCount = computed(() => {
 const canConfirm = computed(() => selectedCount.value > 0)
 
 function getBlockAnswer(block) {
-  return latexToPlainText(block?.ai_answer || block?.ai_result?.answer || '')
+  return latexToPlainText(block?._editedAnswer ?? block?.ai_answer ?? block?.ai_result?.answer ?? '')
 }
 
 function getBlockSolution(block) {
-  return latexToPlainText(block?.ai_solution || block?.ai_result?.solution || '')
+  return latexToPlainText(block?._editedSolution ?? block?.ai_solution ?? block?.ai_result?.solution ?? '')
 }
 
 function inferCategory(block) {
@@ -430,8 +450,8 @@ async function handleConfirm() {
           question_type: block._editedType || 'problem_solving',
           difficulty: block.ai_result?.difficulty || '中等',
           question_text: block._editedText || '',
-          answer: getBlockAnswer(block),
-          solution: getBlockSolution(block),
+          answer: block._editedAnswer?.trim() || '',
+          solution: block._editedSolution?.trim() || '',
           image_path: imageUrl || '',
           has_image: !!imageUrl,
         }

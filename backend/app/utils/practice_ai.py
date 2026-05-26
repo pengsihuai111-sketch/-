@@ -1140,45 +1140,11 @@ async def build_ai_preview(req: AIPracticePreviewRequest, user_id: int, db: Sess
         parsed_requirement=parsed_requirement,
         suggestion=AIPracticeSuggestion(
             summary=summary,
-            selection_reason="优先满足明确题型数量，再补足知识点覆盖和难度梯度。",
+            selection_reason=rerank_insights.get("selection_reason") or "优先满足明确题型数量，再补足知识点覆盖和难度梯度。",
             ordering_reason="默认按难度由浅入深排序，减少一上来就过难的情况。",
-            coverage_summary="候选题先经过程序粗筛，再做多套差异化组合，尽量减少套与套之间的重复。",
-        ),
-        variants=variant_models,
-        selected_questions=first_variant.selected_questions,
-        candidate_count=len(candidates),
-        estimated_time=first_variant.estimated_time,
-        total_variants=len(variant_models),
-    )
-
-
-async def build_ai_preview(req: AIPracticePreviewRequest, user_id: int, db: Session) -> AIPracticePreviewResponse:
-    parsed = await _parse_ai_requirement(req, user_id, db)
-    candidates, score_map, snapshot = _build_candidate_questions(parsed, user_id, db)
-    score_map, rerank_insights = await _apply_ai_candidate_rerank(parsed, candidates, score_map, snapshot)
-    candidates.sort(key=lambda q: (score_map.get(q.question_id, 0), random.random()), reverse=True)
-    variants = _build_variants(parsed, candidates, score_map, snapshot)
-    if not variants:
-        raise HTTPException(status_code=400, detail="这次没有选出合适的题目，请换一种描述再试")
-
-    ai_review_map = await _apply_ai_variant_review(parsed, variants)
-    parsed_requirement = AIParsedRequirement(**parsed)
-    variant_models = [_serialize_variant(item, parsed, snapshot, ai_review_map) for item in variants]
-    first_variant = variant_models[0]
-
-    summary = parsed.get("reasoning_summary") or "系统已经按你的需求先筛候选题，再按整套结构进行平衡。"
-    if parsed.get("sheet_count", 1) > 1:
-        summary += f" 这次一共准备了 {parsed['sheet_count']} 套可直接生成的草稿。"
-
-    return AIPracticePreviewResponse(
-        parsed_requirement=parsed_requirement,
-        suggestion=AIPracticeSuggestion(
-            summary=summary,
-            selection_reason=rerank_insights.get("selection_reason") or "先按题型和知识点筛出候选池，再做整套平衡。",
-            ordering_reason="默认按先易后难排序，并尽量让题型与知识点更均衡。",
-            coverage_summary=rerank_insights.get("coverage_summary") or "每套草稿都会检查题型数量、难度梯度、知识点覆盖和预计时长。",
+            coverage_summary=rerank_insights.get("coverage_summary") or "候选题先经过程序粗筛，再做多套差异化组合，尽量减少套与套之间的重复。",
             explanation_lines=_build_preview_explanations(parsed, variants, snapshot),
-            review_summary=rerank_insights.get("review_summary") or "已尽量降低重复题和过度集中在同一知识点的情况。",
+            review_summary=rerank_insights.get("review_summary") or "",
         ),
         variants=variant_models,
         selected_questions=first_variant.selected_questions,
@@ -1186,7 +1152,6 @@ async def build_ai_preview(req: AIPracticePreviewRequest, user_id: int, db: Sess
         estimated_time=first_variant.estimated_time,
         total_variants=len(variant_models),
     )
-
 
 def _persist_sheet(
     selected: List[Question],
