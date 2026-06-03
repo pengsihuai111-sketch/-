@@ -295,9 +295,37 @@ def _wants_attachment_explanation(message: str) -> bool:
     )
 
 
+def _mentions_specific_attachment_question(message: str) -> bool:
+    compact = "".join(str(message or "").split())
+    return bool(re.search(r"(第[一二三四五六七八九十\d]+题|[一二三四五六七八九十\d]+号题)", compact))
+
+
 def _wants_all_attachment_explanations(message: str) -> bool:
     compact = "".join(str(message or "").split())
-    all_words = ("所有题", "全部题", "每道题", "每一题", "所有题目", "全部题目", "文件里面的题目", "全都")
+    if _mentions_specific_attachment_question(message):
+        return False
+    all_words = (
+        "所有题",
+        "全部题",
+        "每道题",
+        "每一题",
+        "所有题目",
+        "全部题目",
+        "这些题",
+        "这几题",
+        "图片里的题",
+        "图片里面的题",
+        "图片里的题目",
+        "图片里面的题目",
+        "文件里的题",
+        "文件里面的题",
+        "文件里的题目",
+        "文件里面的题目",
+        "附件里的题",
+        "附件里面的题",
+        "里面的题目",
+        "全都",
+    )
     explain_words = ("讲解", "解析", "解答", "答案", "怎么做", "详细")
     return any(word in compact for word in all_words) and any(word in compact for word in explain_words)
 
@@ -311,7 +339,29 @@ def _wants_add_to_wrong_book(message: str) -> bool:
 
 def _wants_add_all_to_wrong_book(message: str) -> bool:
     compact = "".join(str(message or "").split())
-    all_words = ("所有题", "全部题", "每道题", "每一题", "这些题", "全部", "全都")
+    if _mentions_specific_attachment_question(message):
+        return False
+    all_words = (
+        "所有题",
+        "全部题",
+        "每道题",
+        "每一题",
+        "这些题",
+        "这几题",
+        "图片里的题",
+        "图片里面的题",
+        "图片里的题目",
+        "图片里面的题目",
+        "文件里的题",
+        "文件里面的题",
+        "文件里的题目",
+        "文件里面的题目",
+        "附件里的题",
+        "附件里面的题",
+        "里面的题目",
+        "全部",
+        "全都",
+    )
     return _wants_add_to_wrong_book(message) and any(word in compact for word in all_words)
 
 

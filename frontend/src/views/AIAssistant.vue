@@ -83,7 +83,7 @@
               v-model="input"
               type="textarea"
               :autosize="{ minRows: 2, maxRows: 5 }"
-              :placeholder="pendingAttachment ? '补充你的需求，例如：帮我识别并讲解第 1 题 / 提取题目和答案' : '例如：帮我分析最近 7 天错题，并生成一套计算和应用题练习'"
+              :placeholder="pendingAttachment ? '补充你的需求，例如：帮我识别并解析图片里的全部题目 / 只讲第 1 题' : '例如：帮我分析最近 7 天错题，并生成一套计算和应用题练习'"
               resize="none"
               @keydown.enter.exact.prevent="sendMessage()"
             />
