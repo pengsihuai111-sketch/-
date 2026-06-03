@@ -116,8 +116,16 @@ const loading = ref(false)
 const messageListRef = ref(null)
 const fileInputRef = ref(null)
 const pendingAttachment = ref(null)
+
+function createLocalId(prefix = 'msg') {
+  if (globalThis.crypto?.randomUUID) {
+    return globalThis.crypto.randomUUID()
+  }
+  return `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`
+}
+
 const createWelcomeMessage = (content = '你好，我是你的 AI 学习助手。你可以直接用自然语言告诉我想复习什么、哪里不会，或者让我根据错题生成练习。') => ({
-    localId: crypto.randomUUID(),
+    localId: createLocalId('welcome'),
     role: 'assistant',
     content,
     actions: [],
@@ -152,7 +160,7 @@ function persistSession(nextSessionId) {
 
 function normalizeHistoryMessages(rows = []) {
   return rows.map((item) => ({
-    localId: `history-${item.message_id || crypto.randomUUID()}`,
+    localId: `history-${item.message_id || createLocalId('history')}`,
     role: item.role,
     content: item.content || '',
     actions: item.actions || [],
@@ -170,7 +178,7 @@ async function sendMessage(preset = '') {
 
   input.value = ''
   messages.value.push({
-    localId: crypto.randomUUID(),
+    localId: createLocalId('user'),
     role: 'user',
     content: text,
     actions: [],
@@ -186,7 +194,7 @@ async function sendMessage(preset = '') {
     })
     persistSession(res.session_id)
     messages.value.push({
-      localId: crypto.randomUUID(),
+      localId: createLocalId('assistant'),
       role: 'assistant',
       content: res.reply || '我已经处理完成。',
       actions: res.actions || [],
@@ -217,7 +225,7 @@ function removePendingAttachment() {
 async function sendAttachment(text = '') {
   const file = pendingAttachment.value
   messages.value.push({
-    localId: crypto.randomUUID(),
+    localId: createLocalId('upload'),
     role: 'user',
     content: text ? `上传附件：${file.name}\n需求：${text}` : `上传附件：${file.name}`,
     actions: [],
@@ -241,7 +249,7 @@ async function sendAttachment(text = '') {
     const res = await uploadAssistantAttachment(formData)
     persistSession(res.session_id)
     messages.value.push({
-      localId: crypto.randomUUID(),
+      localId: createLocalId('assistant'),
       role: 'assistant',
       content: res.reply || '我已经识别完附件。',
       actions: res.actions || [],
