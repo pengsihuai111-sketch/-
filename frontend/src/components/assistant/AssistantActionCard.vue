@@ -104,7 +104,22 @@
     <template v-else-if="action.type === 'show_question_explanation'">
       <div class="card-head">
         <strong>题目讲解</strong>
-        <el-tag size="small" type="success">解析</el-tag>
+        <div class="card-tools">
+          <el-tag v-if="isWrongBookAdded(question)" size="small" type="success">
+            {{ wrongBookText(question) }}
+          </el-tag>
+          <el-tag v-else size="small" type="success">解析</el-tag>
+          <el-button
+            size="small"
+            type="primary"
+            plain
+            :loading="isAddingWrong(question)"
+            :disabled="isWrongBookAdded(question)"
+            @click="addQuestionToWrongBook(question)"
+          >
+            加入错题本
+          </el-button>
+        </div>
       </div>
       <div class="explain-block">
         <div v-if="question.stem || question.question_text" class="explain-section">
@@ -327,6 +342,21 @@
           <div v-if="item.answer" class="attachment-answer">
             <b>答案：</b><span v-html="formatMath(item.answer)" />
           </div>
+          <div class="wrong-action-row">
+            <el-tag v-if="isWrongBookAdded(item)" size="small" type="success">
+              {{ wrongBookText(item) }}
+            </el-tag>
+            <el-button
+              v-else
+              size="small"
+              type="primary"
+              plain
+              :loading="isAddingWrong(item)"
+              @click="addQuestionToWrongBook(item)"
+            >
+              加入错题本
+            </el-button>
+          </div>
         </div>
       </div>
       <el-empty v-else description="暂时没有识别出明确题目，可以换更清晰的图片或文件再试。" :image-size="80" />
@@ -343,6 +373,7 @@ import { computed, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { useRouter } from 'vue-router'
 import { aiGenerateConfirm, aiReplaceQuestion, aiSupplementQuestion } from '../../api/practice'
+import { addAssistantWrongQuestion } from '../../api/assistant'
 import { renderMath } from '../../utils/math'
 
 const props = defineProps({
@@ -358,12 +389,15 @@ const confirmLoading = ref(false)
 const replaceLoadingKey = ref('')
 const supplementLoadingKey = ref('')
 const createdSheets = ref([])
+const addWrongLoadingKey = ref('')
+const wrongBookResults = ref({})
 
 watch(
   () => props.action.data,
   (value) => {
     localData.value = cloneData(value || {})
     createdSheets.value = []
+    wrongBookResults.value = {}
   }
 )
 
@@ -433,6 +467,72 @@ function setVariantQuestions(variant, questions) {
 
 function formatMath(text) {
   return renderMath(text || '')
+}
+
+function questionKey(item = {}) {
+  return [
+    item.question_id || '',
+    item.page_no || '',
+    item.question_no || '',
+    String(item.question_text || item.stem || '').slice(0, 80),
+  ].join('|')
+}
+
+function getWrongBookResult(item = {}) {
+  return item.wrong_book_result || wrongBookResults.value[questionKey(item)] || null
+}
+
+function isWrongBookAdded(item = {}) {
+  const result = getWrongBookResult(item)
+  return Boolean(result?.record_id || result?.created || result?.already_exists)
+}
+
+function wrongBookText(item = {}) {
+  const result = getWrongBookResult(item)
+  return result?.already_exists ? '已在错题本' : '已加入错题本'
+}
+
+function isAddingWrong(item = {}) {
+  return addWrongLoadingKey.value === questionKey(item)
+}
+
+function buildWrongQuestionPayload(item = {}) {
+  return {
+    question_text: String(item.question_text || item.stem || '').trim(),
+    answer: String(item.answer || '').trim(),
+    solution: String(item.solution || item.analysis || '').trim(),
+    question_type: item.question_type || 'other',
+    difficulty: item.difficulty || '中等',
+    knowledge_point: item.knowledge_point || '',
+    knowledge_category: item.knowledge_category || '',
+    exam_name: 'AI助手识别',
+    error_type: '其他',
+    notes: '由 AI 学习助手识别添加',
+  }
+}
+
+async function addQuestionToWrongBook(item = {}) {
+  const key = questionKey(item)
+  const payload = buildWrongQuestionPayload(item)
+  if (!payload.question_text) {
+    ElMessage.warning('这道题缺少题干，暂时不能加入错题本')
+    return
+  }
+  addWrongLoadingKey.value = key
+  try {
+    const result = await addAssistantWrongQuestion(payload)
+    wrongBookResults.value = {
+      ...wrongBookResults.value,
+      [key]: result,
+    }
+    if (result.already_exists) {
+      ElMessage.info(result.message || '这道题已经在错题本里了')
+    } else {
+      ElMessage.success(result.message || '已加入错题本')
+    }
+  } finally {
+    addWrongLoadingKey.value = ''
+  }
 }
 
 function percent(value) {
@@ -554,6 +654,19 @@ function goPractice() {
   gap: 12px;
   margin-bottom: 12px;
   color: #0f172a;
+}
+
+.card-tools,
+.wrong-action-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.wrong-action-row {
+  justify-content: flex-end;
+  margin-top: 10px;
 }
 
 .variant-list,

@@ -15,6 +15,10 @@ export function uploadAssistantAttachment(formData) {
   })
 }
 
+export function addAssistantWrongQuestion(data) {
+  return request.post('/assistant/wrong-question', data)
+}
+
 export function listAssistantSessions() {
   return request.get('/assistant/sessions')
 }
