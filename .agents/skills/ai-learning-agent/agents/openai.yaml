@@ -1,0 +1,4 @@
+﻿interface:
+  display_name: "AI 学习助手 Agent"
+  short_description: "按项目方案实现 LangGraph AI 学习助手"
+  default_prompt: "基于当前题库系统，按 ai-learning-agent skill 设计或实现 AI 学习助手 Agent。"

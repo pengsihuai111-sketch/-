@@ -32,6 +32,7 @@
                 <el-option label="错题重练" value="wrong_redo" />
                 <el-option label="每日训练" value="daily" />
                 <el-option label="模拟试卷" value="exam" />
+                <el-option label="自定义练习" value="custom" />
               </el-select>
             </el-form-item>
             <el-form-item label="生成套数">
@@ -43,6 +44,14 @@
             <el-form-item label="目标时长">
               <el-input-number v-model="structured.target_minutes" :min="10" :max="120" controls-position="right" />
               <span class="unit-label">分钟</span>
+            </el-form-item>
+            <el-form-item label="错题天数">
+              <el-input-number v-model="structured.recent_days" :min="0" :max="365" controls-position="right" />
+              <span class="unit-label">天</span>
+            </el-form-item>
+            <el-form-item label="举一反三">
+              <el-input-number v-model="structured.similar_question_count" :min="0" :max="10" controls-position="right" />
+              <span class="unit-label">题/套</span>
             </el-form-item>
             <el-form-item label="难度安排">
               <el-select v-model="structured.difficulties" multiple collapse-tags collapse-tags-tooltip placeholder="可多选">
@@ -87,6 +96,7 @@
           <el-form-item label="额外偏好">
             <div class="toggle-row">
               <el-checkbox v-model="structured.must_include_wrong_questions">优先包含错题</el-checkbox>
+              <el-checkbox v-model="structured.include_all_wrong_questions">包含已掌握错题</el-checkbox>
               <el-checkbox v-model="structured.avoid_recent_questions">尽量避开最近做过的题</el-checkbox>
               <el-checkbox v-model="structured.difficulty_progression">按先易后难排序</el-checkbox>
             </div>
@@ -133,6 +143,8 @@
                 <div>套数：{{ previewData.parsed_requirement.sheet_count || variants.length }} 套</div>
                 <div>题量：每套 {{ previewData.parsed_requirement.target_count }} 题</div>
                 <div>时长：目标 {{ previewData.parsed_requirement.target_minutes || activeVariant?.estimated_time || 0 }} 分钟</div>
+                <div v-if="previewData.parsed_requirement.recent_days">错题范围：最近 {{ previewData.parsed_requirement.recent_days }} 天</div>
+                <div v-if="previewData.parsed_requirement.similar_question_count">举一反三：每套 {{ previewData.parsed_requirement.similar_question_count }} 题</div>
               </div>
             </div>
 
@@ -370,6 +382,9 @@ const structuredDefaults = () => ({
   },
   difficulties: ['基础', '中等'],
   must_include_wrong_questions: false,
+  recent_days: 0,
+  include_all_wrong_questions: false,
+  similar_question_count: 0,
   avoid_recent_questions: true,
   difficulty_progression: true,
 })
@@ -510,6 +525,8 @@ function applyExample(type) {
     structured.target_count = 10
     structured.target_minutes = 25
     structured.must_include_wrong_questions = true
+    structured.recent_days = 7
+    structured.similar_question_count = 1
     structured.difficulties = ['基础', '中等']
     structured.question_type_counts.problem_solving = 3
     structured.question_type_counts.calculation = 3
@@ -523,11 +540,14 @@ function applyExample(type) {
   structured.target_count = 12
   structured.target_minutes = 35
   structured.must_include_wrong_questions = true
+  structured.recent_days = 3
+  structured.include_all_wrong_questions = true
+  structured.similar_question_count = 2
   structured.difficulties = ['基础', '中等', '挑战']
   structured.question_type_counts.calculation = 4
   structured.question_type_counts.fill_blank = 3
   structured.question_type_counts.problem_solving = 3
-  prompt.value = '根据我最近一周的错题生成三套练习，整体先易后难。'
+  prompt.value = '根据我最近3天所有错题生成3天练习，每套4个计算题，至少2个举一反三，整体先易后难。'
 }
 
 function sheetTypeLabel(type) {
@@ -536,6 +556,7 @@ function sheetTypeLabel(type) {
     wrong_redo: '错题重练',
     special_topic: '专题练习',
     exam: '模拟试卷',
+    custom: '自定义练习',
   }[type] || type || '未设置'
 }
 
@@ -623,6 +644,9 @@ function buildPreviewPayload() {
     ),
     difficulties: [...structured.difficulties],
     must_include_wrong_questions: structured.must_include_wrong_questions,
+    recent_days: Number(structured.recent_days || 0) || null,
+    include_all_wrong_questions: structured.include_all_wrong_questions,
+    similar_question_count: Number(structured.similar_question_count || 0),
     avoid_recent_questions: structured.avoid_recent_questions,
     difficulty_progression: structured.difficulty_progression,
   }
@@ -638,6 +662,9 @@ async function handlePreview() {
     Object.keys(payload.question_type_counts).length,
     payload.difficulties.length,
     payload.must_include_wrong_questions,
+    payload.recent_days,
+    payload.include_all_wrong_questions,
+    payload.similar_question_count,
   ].some(Boolean)
 
   if (!payload.prompt && !hasStructuredCondition) {

@@ -68,6 +68,7 @@ htmlcov/
 uploads/
 backend/uploads/
 math_bank_v4/backend/uploads/
+backend/storage/
 *.pdf
 *.jpg
 *.jpeg

@@ -5,14 +5,23 @@ from fastapi import Request
 from fastapi.responses import JSONResponse
 import traceback
 import logging
-from .api import auth, questions, wrong_questions, practice, practice_ai, payment
+from .api import assistant, auth, questions, wrong_questions, practice, practice_ai, payment
 from .database import engine, Base
 from .models import *  # noqa: ensure models registered
+from .models import AgentInvocationLog, AssistantMessage, AssistantSession, VectorSyncJob
 from .core.config import UploadConfig, CORSConfig
 
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="小升初数学题库管理系统 v4.0", version="4.0.0")
+
+# 开发环境自动创建 AI 助手所需表；已有业务表仍由原迁移流程管理。
+Base.metadata.create_all(bind=engine, tables=[
+    AssistantSession.__table__,
+    AssistantMessage.__table__,
+    AgentInvocationLog.__table__,
+    VectorSyncJob.__table__,
+])
 
 # 全局异常处理器
 @app.exception_handler(Exception)
@@ -49,6 +58,7 @@ app.include_router(questions.router)
 app.include_router(wrong_questions.router)
 app.include_router(practice.router)
 app.include_router(practice_ai.router)
+app.include_router(assistant.router)
 app.include_router(payment.router)
 
 

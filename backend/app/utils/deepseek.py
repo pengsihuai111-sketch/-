@@ -24,6 +24,7 @@ from PIL import Image
 from rapidocr_onnxruntime import RapidOCR
 
 from ..config import (
+    ANSWER_LLM_MODEL,
     DEEPSEEK_API_KEY, DEEPSEEK_API_URL, DEEPSEEK_MODEL,
     ZHIPU_API_KEY, ZHIPU_API_URL, ZHIPU_MODEL,
     VISION_API_KEY, VISION_API_URL, VISION_MODEL,
@@ -48,21 +49,26 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(name)s] %(levelna
 logger = logging.getLogger(__name__)
 _rapid_ocr_engine = None
 
-def _get_text_llm_config() -> dict:
+def _get_text_llm_config(model_override: str | None = None) -> dict:
     """Get text LLM config based on TEXT_LLM_PROVIDER."""
     provider = TEXT_LLM_PROVIDER.lower()
     if provider == "zhipu":
-        return {
+        config = {
             "api_key": ZHIPU_API_KEY,
             "api_url": ZHIPU_API_URL,
             "model": ZHIPU_MODEL,
         }
-    # default: deepseek
-    return {
-        "api_key": DEEPSEEK_API_KEY,
-        "api_url": DEEPSEEK_API_URL,
-        "model": DEEPSEEK_MODEL,
-    }
+    else:
+        # default: deepseek
+        config = {
+            "api_key": DEEPSEEK_API_KEY,
+            "api_url": DEEPSEEK_API_URL,
+            "model": DEEPSEEK_MODEL,
+        }
+
+    if model_override:
+        config["model"] = model_override
+    return config
 
 
 async def _call_text_llm(
@@ -71,9 +77,10 @@ async def _call_text_llm(
     max_tokens: int = 4096,
     timeout: float = 180.0,
     json_output: bool = False,
+    model_override: str | None = None,
 ) -> str:
     """Unified text LLM caller — supports DeepSeek and Zhipu AI."""
-    config = _get_text_llm_config()
+    config = _get_text_llm_config(model_override=model_override)
     api_key = config["api_key"]
     if not api_key:
         raise ValueError(f"{TEXT_LLM_PROVIDER} API key 未配置")
@@ -119,13 +126,21 @@ async def call_text_llm(
     max_tokens: int = 4096,
     timeout: float = 180.0,
     json_output: bool = False,
+    model_override: str | None = None,
 ) -> str:
     """Public wrapper for text LLM calls.
 
     This is a public interface for calling the text LLM, used by other modules
     like pdf_to_markdown for question extraction.
     """
-    return await _call_text_llm(messages, system_prompt, max_tokens, timeout, json_output)
+    return await _call_text_llm(
+        messages,
+        system_prompt,
+        max_tokens,
+        timeout,
+        json_output,
+        model_override=model_override,
+    )
 
 
 async def _call_multimodal_llm(
@@ -1358,6 +1373,7 @@ async def generate_answer(question_text: str, question_type: str = "", knowledge
                 max_tokens=4096,
                 timeout=90.0,
                 json_output=True,
+                model_override=ANSWER_LLM_MODEL,
             )
 
             if not content:

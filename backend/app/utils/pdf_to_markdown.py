@@ -470,7 +470,8 @@ async def _enrich_questions_with_answers(questions: List[Dict], llm_caller) -> L
         await asyncio.gather(*(enrich_one(question) for question in questions))
         return questions
 
-    from .deepseek import _fix_latex_json_escapes, _parse_response
+    from ..core.config import ANSWER_LLM_MODEL
+    from .deepseek import _fix_latex_json_escapes, _parse_response, call_text_llm
 
     batch_size = 10
     for start in range(0, len(questions), batch_size):
@@ -517,12 +518,13 @@ Return:
         )
 
         try:
-            response = await llm_caller(
+            response = await call_text_llm(
                 messages=[{"role": "user", "content": user_prompt}],
                 system_prompt=system_prompt,
                 max_tokens=8192,
                 timeout=120.0,
                 json_output=True,
+                model_override=ANSWER_LLM_MODEL,
             )
             parsed = _parse_response(_fix_latex_json_escapes(response))
         except Exception as exc:

@@ -62,6 +62,25 @@ class PaymentStatus(str, enum.Enum):
     failed = "failed"
     refunded = "refunded"
 
+class AssistantSessionStatus(str, enum.Enum):
+    active = "active"
+    archived = "archived"
+
+class AssistantMessageRole(str, enum.Enum):
+    user = "user"
+    assistant = "assistant"
+    tool = "tool"
+
+class VectorSyncAction(str, enum.Enum):
+    upsert = "upsert"
+    delete = "delete"
+
+class VectorSyncStatus(str, enum.Enum):
+    pending = "pending"
+    processing = "processing"
+    success = "success"
+    failed = "failed"
+
 
 # ===================== Models =====================
 
@@ -86,6 +105,8 @@ class User(Base):
     practice_history = relationship("UserPracticeHistory", back_populates="user")
     practice_sheets = relationship("PracticeSheet", back_populates="user")
     orders = relationship("MemberOrder", back_populates="user")
+    assistant_sessions = relationship("AssistantSession", back_populates="user")
+    assistant_messages = relationship("AssistantMessage", back_populates="user")
 
 
 class Question(Base):
@@ -278,3 +299,69 @@ class MemberOrder(Base):
     paid_date = Column(DateTime)
 
     user = relationship("User", back_populates="orders")
+
+
+class AssistantSession(Base):
+    """AI 学习助手会话"""
+    __tablename__ = "assistant_sessions"
+
+    session_id = Column(String(64), primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.user_id", ondelete="CASCADE"), nullable=False)
+    title = Column(String(100))
+    status = Column(String(20), default=AssistantSessionStatus.active.value)
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+    user = relationship("User", back_populates="assistant_sessions")
+    messages = relationship("AssistantMessage", back_populates="session", cascade="all, delete-orphan")
+
+
+class AssistantMessage(Base):
+    """AI 学习助手消息与工具调用记录"""
+    __tablename__ = "assistant_messages"
+
+    message_id = Column(Integer, primary_key=True, autoincrement=True)
+    session_id = Column(String(64), ForeignKey("assistant_sessions.session_id", ondelete="CASCADE"), nullable=False)
+    user_id = Column(Integer, ForeignKey("users.user_id", ondelete="CASCADE"), nullable=False)
+    role = Column(String(20), nullable=False)
+    content = Column(Text)
+    intent = Column(String(50))
+    tool_name = Column(String(100))
+    tool_args = Column(Text)
+    tool_result = Column(Text)
+    actions = Column(Text)
+    error_message = Column(Text)
+    created_at = Column(DateTime, server_default=func.now())
+
+    session = relationship("AssistantSession", back_populates="messages")
+    user = relationship("User", back_populates="assistant_messages")
+
+
+class AgentInvocationLog(Base):
+    """Agent invocation audit log for operations and troubleshooting."""
+    __tablename__ = "agent_invocation_logs"
+
+    log_id = Column(Integer, primary_key=True, autoincrement=True)
+    session_id = Column(String(64), nullable=False)
+    user_id = Column(Integer, ForeignKey("users.user_id", ondelete="CASCADE"), nullable=False)
+    message_preview = Column(String(300))
+    intent = Column(String(50))
+    tool_name = Column(String(100))
+    elapsed_ms = Column(Integer, default=0)
+    success = Column(Boolean, default=True)
+    error_message = Column(Text)
+    created_at = Column(DateTime, server_default=func.now())
+
+
+class VectorSyncJob(Base):
+    """Question vector synchronization job."""
+    __tablename__ = "vector_sync_jobs"
+
+    job_id = Column(Integer, primary_key=True, autoincrement=True)
+    entity_type = Column(String(50), nullable=False, default="question")
+    entity_id = Column(Integer, nullable=False)
+    action = Column(String(20), nullable=False, default=VectorSyncAction.upsert.value)
+    status = Column(String(20), nullable=False, default=VectorSyncStatus.pending.value)
+    error_message = Column(Text)
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())

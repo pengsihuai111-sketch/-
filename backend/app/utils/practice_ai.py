@@ -37,7 +37,7 @@ from .deepseek import call_text_llm
 
 ALLOWED_TYPES = {"calculation", "fill_blank", "choice", "problem_solving"}
 ALLOWED_DIFFICULTIES = {"基础", "中等", "挑战"}
-ALLOWED_SHEET_TYPES = {"daily", "wrong_redo", "special_topic", "exam"}
+ALLOWED_SHEET_TYPES = {"daily", "wrong_redo", "special_topic", "exam", "custom"}
 TYPE_ALIASES = {
     "计算": "calculation",
     "计算题": "calculation",
@@ -182,6 +182,8 @@ def _extract_sheet_count(text: str) -> int:
     patterns = [
         r"(\d+)\s*(?:份|张|套)(?:练习|试卷|卷子|练习单)",
         r"出\s*(\d+)\s*(?:份|张|套)",
+        r"生成\s*(\d+)\s*天(?:练习|训练)",
+        r"(\d+)\s*天(?:练习|训练)",
     ]
     for pattern in patterns:
         match = re.search(pattern, text)
@@ -250,6 +252,40 @@ def _extract_target_minutes(text: str) -> Optional[int]:
     return None
 
 
+def _extract_recent_days(text: str) -> Optional[int]:
+    patterns = [
+        r"(?:最近|近)\s*(\d+)\s*天",
+        r"(\d+)\s*天(?:内|以内|之内)?(?:的)?(?:所有)?错题",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, text)
+        if match:
+            return max(1, min(365, int(match.group(1))))
+    week_match = re.search(r"(?:最近|近)?\s*(一周|1\s*周|7\s*天)", text)
+    if week_match:
+        return 7
+    month_match = re.search(r"(?:最近|近)?\s*(一个月|1\s*个月|30\s*天)", text)
+    if month_match:
+        return 30
+    if "最近" in text and "错题" in text:
+        return 7
+    return None
+
+
+def _extract_similar_question_count(text: str) -> int:
+    patterns = [
+        r"(?:至少|不少于|每套至少|每张至少)?\s*(\d+)\s*(?:个|道|题)?(?:举一反三|迁移题|变式题)",
+        r"(?:举一反三|迁移题|变式题)(?:至少|不少于|每套|每张)?\s*(\d+)\s*(?:个|道|题)?",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, text)
+        if match:
+            return max(0, min(10, int(match.group(1))))
+    if "举一反三" in text or "迁移题" in text or "变式题" in text:
+        return 1
+    return 0
+
+
 def _build_requirement_fallback(prompt: str, user_grade: str, catalog: Dict[str, List[str]]) -> Dict[str, Any]:
     text = prompt or ""
     all_points = [kp for points in catalog.values() for kp in points]
@@ -286,7 +322,10 @@ def _build_requirement_fallback(prompt: str, user_grade: str, catalog: Dict[str,
 
     selected_categories = [cat for cat in categories if cat and cat in text]
     selected_points = [kp for kp in all_points if kp and kp in text]
-    must_include_wrong = any(token in text for token in ["错题", "查漏补缺", "弱点", "最近", "近一周", "近7天", "近30天"])
+    recent_days = _extract_recent_days(text)
+    similar_question_count = _extract_similar_question_count(text)
+    include_all_wrong = bool(re.search(r"(?:所有|全部|全量|每一道).{0,8}错题|错题.{0,8}(?:全部|全都|都要)", text))
+    must_include_wrong = any(token in text for token in ["错题", "查漏补缺", "弱点", "最近", "近一周", "近7天", "近30天"]) or bool(recent_days)
     type_counts = _extract_type_counts(text)
 
     return {
@@ -303,6 +342,9 @@ def _build_requirement_fallback(prompt: str, user_grade: str, catalog: Dict[str,
         "difficulties": difficulties,
         "difficulty_progression": True,
         "must_include_wrong_questions": must_include_wrong,
+        "recent_days": recent_days,
+        "include_all_wrong_questions": include_all_wrong,
+        "similar_question_count": similar_question_count,
         "avoid_recent_questions": True,
         "strategy_hint": "wrong_focused" if must_include_wrong else "topic_balanced",
         "reasoning_summary": "系统会先理解题量、题型和知识点要求，再从题库里筛出更匹配的候选题。",
@@ -326,6 +368,9 @@ def _merge_structured_requirement_input(req: AIPracticePreviewRequest) -> Dict[s
         "difficulties",
         "difficulty_progression",
         "must_include_wrong_questions",
+        "recent_days",
+        "include_all_wrong_questions",
+        "similar_question_count",
         "avoid_recent_questions",
     ]:
         value = getattr(req, key, None)
@@ -360,12 +405,15 @@ async def _parse_ai_requirement(req: AIPracticePreviewRequest, user_id: int, db:
         "你是小学数学练习单规划助手。请把用户需求解析成结构化配置。\n"
         "要求：\n"
         "1. 只使用提供的知识点和知识类别。\n"
-        "2. sheet_type 只能是 daily、wrong_redo、special_topic、exam 之一。\n"
+        "2. sheet_type 只能是 daily、wrong_redo、special_topic、exam、custom 之一。\n"
         "3. question_types / question_type_counts 只能使用 calculation、fill_blank、choice、problem_solving。\n"
         "4. difficulties 只能是 基础、中等、挑战。\n"
         "5. 如果用户提到多份、几张、几套练习单，要写入 sheet_count。\n"
         "6. 如果用户提到每套固定题型数量，比如 4 个计算题，要写入 question_type_counts。\n"
-        "7. 只返回严格 JSON，不要 markdown。\n\n"
+        "7. 如果用户提到最近 N 天错题，写入 recent_days。\n"
+        "8. 如果用户提到所有/全部错题，include_all_wrong_questions 必须为 true。\n"
+        "9. 如果用户提到每套至少 N 个举一反三/迁移题/变式题，写入 similar_question_count。\n"
+        "10. 只返回严格 JSON，不要 markdown。\n\n"
         f"用户年级：{grade_level or '六年级'}\n"
         f"用户薄弱知识点：{json.dumps(snapshot['weak_points'], ensure_ascii=False)}\n"
         f"表单条件：\n{json.dumps(structured_input, ensure_ascii=False)}\n"
@@ -386,6 +434,9 @@ async def _parse_ai_requirement(req: AIPracticePreviewRequest, user_id: int, db:
         '  "difficulties": [],\n'
         '  "difficulty_progression": true,\n'
         '  "must_include_wrong_questions": false,\n'
+        '  "recent_days": null,\n'
+        '  "include_all_wrong_questions": false,\n'
+        '  "similar_question_count": 0,\n'
         '  "avoid_recent_questions": true,\n'
         '  "strategy_hint": "",\n'
         '  "reasoning_summary": "",\n'
@@ -438,6 +489,16 @@ async def _parse_ai_requirement(req: AIPracticePreviewRequest, user_id: int, db:
     merged["difficulties"] = _normalize_difficulties(merged.get("difficulties")) or fallback["difficulties"]
     merged["difficulty_progression"] = bool(merged.get("difficulty_progression", True))
     merged["must_include_wrong_questions"] = bool(merged.get("must_include_wrong_questions", fallback["must_include_wrong_questions"]))
+    try:
+        raw_recent_days = merged.get("recent_days")
+        merged["recent_days"] = max(1, min(365, int(raw_recent_days))) if raw_recent_days not in (None, "", 0) else fallback.get("recent_days")
+    except (TypeError, ValueError):
+        merged["recent_days"] = fallback.get("recent_days")
+    merged["include_all_wrong_questions"] = bool(merged.get("include_all_wrong_questions", fallback.get("include_all_wrong_questions", False)))
+    try:
+        merged["similar_question_count"] = max(0, min(10, int(merged.get("similar_question_count") or fallback.get("similar_question_count") or 0)))
+    except (TypeError, ValueError):
+        merged["similar_question_count"] = fallback.get("similar_question_count") or 0
     merged["avoid_recent_questions"] = bool(merged.get("avoid_recent_questions", True))
     merged["strategy_hint"] = _clean_str(merged.get("strategy_hint")) or fallback["strategy_hint"]
     merged["reasoning_summary"] = _clean_str(merged.get("reasoning_summary")) or fallback["reasoning_summary"]
@@ -447,6 +508,9 @@ async def _parse_ai_requirement(req: AIPracticePreviewRequest, user_id: int, db:
     explicit_target_count = _extract_target_count(prompt)
     explicit_target_minutes = _extract_target_minutes(prompt)
     explicit_type_counts = _extract_type_counts(prompt)
+    explicit_recent_days = _extract_recent_days(prompt)
+    explicit_similar_count = _extract_similar_question_count(prompt)
+    explicit_include_all_wrong = bool(re.search(r"(?:所有|全部|全量|每一道).{0,8}错题|错题.{0,8}(?:全部|全都|都要)", prompt))
     explicit_wrong = any(token in prompt for token in ["错题", "查漏补缺", "弱点", "最近", "近一周", "近7天", "近30天"])
 
     if explicit_sheet_count:
@@ -459,6 +523,12 @@ async def _parse_ai_requirement(req: AIPracticePreviewRequest, user_id: int, db:
         merged["question_type_counts"] = explicit_type_counts
         if not merged["question_types"]:
             merged["question_types"] = list(explicit_type_counts.keys())
+    if explicit_recent_days:
+        merged["recent_days"] = explicit_recent_days
+    if explicit_include_all_wrong:
+        merged["include_all_wrong_questions"] = True
+    if explicit_similar_count:
+        merged["similar_question_count"] = explicit_similar_count
     if explicit_wrong:
         merged["must_include_wrong_questions"] = True
         if merged["sheet_type"] == "special_topic":
@@ -626,9 +696,9 @@ def _build_target_type_counts(parsed: Dict[str, Any], candidates: List[Question]
 
 
 def _build_target_difficulty_counts(parsed: Dict[str, Any], candidates: List[Question], target_count: int) -> Dict[str, int]:
-    available = [item for item in ["鍩虹", "涓瓑", "鎸戞垬"] if any(q.difficulty == item for q in candidates)]
+    available = [item for item in ["基础", "中等", "挑战"] if any(q.difficulty == item for q in candidates)]
     requested = [item for item in parsed.get("difficulties") or [] if item in available]
-    difficulty_keys = requested or available or ["涓瓑"]
+    difficulty_keys = requested or available or ["中等"]
     return _distribute_counts(target_count, difficulty_keys)
 
 
@@ -645,10 +715,10 @@ def _build_slot_plan(parsed: Dict[str, Any], candidates: List[Question]) -> List
     type_slots = type_slots[:target_count]
 
     difficulty_slots: List[Optional[str]] = []
-    for difficulty in ["鍩虹", "涓瓑", "鎸戞垬"]:
+    for difficulty in ["基础", "中等", "挑战"]:
         difficulty_slots.extend([difficulty] * difficulty_counts.get(difficulty, 0))
     if len(difficulty_slots) < target_count:
-        difficulty_slots.extend(["涓瓑"] * (target_count - len(difficulty_slots)))
+        difficulty_slots.extend(["中等"] * (target_count - len(difficulty_slots)))
     difficulty_slots = difficulty_slots[:target_count]
     if not parsed.get("difficulty_progression"):
         random.shuffle(difficulty_slots)
@@ -1082,6 +1152,172 @@ def _build_variants(parsed: Dict[str, Any], candidates: List[Question], score_ma
     return variants
 
 
+def _should_build_wrong_period_variants(parsed: Dict[str, Any]) -> bool:
+    return bool(parsed.get("must_include_wrong_questions")) and (
+        bool(parsed.get("recent_days"))
+        or bool(parsed.get("include_all_wrong_questions"))
+        or int(parsed.get("similar_question_count") or 0) > 0
+    )
+
+
+def _fetch_wrong_period_questions(parsed: Dict[str, Any], user_id: int, db: Session) -> List[Question]:
+    query = db.query(UserWrongQuestion).filter(UserWrongQuestion.user_id == user_id)
+    if not parsed.get("include_all_wrong_questions"):
+        query = query.filter(UserWrongQuestion.mastered == False)
+    recent_days = parsed.get("recent_days")
+    if recent_days:
+        start_day = date.today() - timedelta(days=int(recent_days))
+        query = query.filter(UserWrongQuestion.created_date >= start_day)
+    records = query.order_by(UserWrongQuestion.created_date.desc()).all()
+
+    questions: List[Question] = []
+    seen = set()
+    allowed_types = set(parsed.get("question_types") or [])
+    for record in records:
+        if record.question_id in seen:
+            continue
+        question = db.query(Question).filter(Question.question_id == record.question_id).first()
+        if not question:
+            continue
+        if allowed_types and question.question_type not in allowed_types and not parsed.get("question_type_counts"):
+            continue
+        seen.add(question.question_id)
+        questions.append(question)
+    return questions
+
+
+def _pick_fill_questions(
+    candidates: List[Question],
+    selected: List[Question],
+    score_map: Dict[int, float],
+    needed: int,
+    global_blocked_ids: set,
+    required_type: Optional[str] = None,
+    target_question: Optional[Question] = None,
+) -> List[Question]:
+    picked: List[Question] = []
+    penalty = Counter({qid: 1 for qid in global_blocked_ids})
+    for _ in range(max(0, needed)):
+        question = _pick_best(
+            candidates,
+            selected + picked,
+            score_map,
+            penalty,
+            required_type=required_type,
+            target_question=target_question,
+            blocked_ids=global_blocked_ids,
+        )
+        if not question:
+            break
+        picked.append(question)
+        global_blocked_ids.add(question.question_id)
+    return picked
+
+
+def _pick_similar_questions(
+    source_questions: List[Question],
+    candidates: List[Question],
+    selected: List[Question],
+    score_map: Dict[int, float],
+    needed: int,
+    global_blocked_ids: set,
+) -> List[Question]:
+    if needed <= 0 or not source_questions:
+        return []
+    source_points = {q.knowledge_point for q in source_questions if q.knowledge_point}
+    source_categories = {q.knowledge_category for q in source_questions if q.knowledge_category}
+    focused = [
+        q for q in candidates
+        if q.question_id not in global_blocked_ids
+        and (
+            (q.knowledge_point and q.knowledge_point in source_points)
+            or (q.knowledge_category and q.knowledge_category in source_categories)
+        )
+    ]
+    pool = focused or candidates
+    result: List[Question] = []
+    for index in range(needed):
+        target = source_questions[index % len(source_questions)]
+        picked = _pick_fill_questions(
+            pool,
+            selected + result,
+            score_map,
+            1,
+            global_blocked_ids,
+            target_question=target,
+        )
+        if not picked:
+            break
+        result.extend(picked)
+    return result
+
+
+def _build_wrong_period_ai_variants(
+    parsed: Dict[str, Any],
+    user_id: int,
+    db: Session,
+) -> Tuple[List[Dict[str, Any]], List[Question], Dict[int, float], Dict[str, Any]]:
+    candidate_parsed = dict(parsed)
+    candidate_parsed["question_types"] = []
+    candidates, score_map, snapshot = _build_candidate_questions(candidate_parsed, user_id, db)
+    wrong_questions = _fetch_wrong_period_questions(parsed, user_id, db)
+    if not wrong_questions:
+        raise HTTPException(status_code=400, detail="当前时间范围内没有符合条件的错题，请调整天数或勾选包含已掌握错题")
+
+    sheet_count = max(1, min(5, int(parsed.get("sheet_count") or 1)))
+    chunks: List[List[Question]] = [[] for _ in range(sheet_count)]
+    for index, question in enumerate(wrong_questions):
+        chunks[index % sheet_count].append(question)
+
+    type_counts = _normalize_type_counts(parsed.get("question_type_counts"))
+    similar_count = max(0, min(10, int(parsed.get("similar_question_count") or 0)))
+    target_count = max(4, min(40, int(parsed.get("target_count") or 8)))
+    variants: List[Dict[str, Any]] = []
+    global_blocked_ids = {q.question_id for q in wrong_questions}
+
+    for index, wrong_chunk in enumerate(chunks):
+        selected = list(wrong_chunk)
+
+        for question_type, required_count in type_counts.items():
+            current_count = sum(1 for q in selected if q.question_type == question_type)
+            needed = max(0, int(required_count) - current_count)
+            selected.extend(_pick_fill_questions(
+                candidates,
+                selected,
+                score_map,
+                needed,
+                global_blocked_ids,
+                required_type=question_type,
+            ))
+
+        selected.extend(_pick_similar_questions(
+            wrong_chunk or selected,
+            candidates,
+            selected,
+            score_map,
+            similar_count,
+            global_blocked_ids,
+        ))
+
+        while len(selected) < target_count:
+            picked = _pick_fill_questions(candidates, selected, score_map, 1, global_blocked_ids)
+            if not picked:
+                break
+            selected.extend(picked)
+
+        if parsed.get("difficulty_progression"):
+            selected.sort(key=lambda q: (DIFFICULTY_WEIGHT.get(q.difficulty, 1), TYPE_LABELS.get(q.question_type or "", "")))
+
+        variants.append({
+            "variant_id": f"variant-{index + 1}",
+            "sheet_name": parsed.get("sheet_name") or "AI错题强化练习",
+            "selected_questions": selected,
+            "estimated_time": _estimate_time(selected),
+        })
+
+    return variants, candidates, score_map, snapshot
+
+
 def _serialize_selected_question(question: Question, reason: str) -> AISelectedQuestion:
     return AISelectedQuestion(
         question_id=question.question_id,
@@ -1117,6 +1353,38 @@ def _serialize_variant(item: Dict[str, Any], parsed: Dict[str, Any], snapshot: D
 
 async def build_ai_preview(req: AIPracticePreviewRequest, user_id: int, db: Session) -> AIPracticePreviewResponse:
     parsed = await _parse_ai_requirement(req, user_id, db)
+    if _should_build_wrong_period_variants(parsed):
+        variants, candidates, _, snapshot = _build_wrong_period_ai_variants(parsed, user_id, db)
+        if not variants:
+            raise HTTPException(status_code=400, detail="这次没有选出合适的错题练习草稿，请调整时间范围或题量")
+        parsed_requirement = AIParsedRequirement(**parsed)
+        ai_review_map: Dict[str, Dict[str, str]] = {}
+        if _should_use_ai_variant_review(parsed, variants):
+            ai_review_map = await _apply_ai_variant_review(parsed, variants)
+        variant_models = [_serialize_variant(item, parsed, snapshot, ai_review_map) for item in variants]
+        first_variant = variant_models[0]
+        recent_desc = f"最近 {parsed.get('recent_days')} 天" if parsed.get("recent_days") else "所选范围"
+        summary = (
+            f"已按{recent_desc}错题专门组卷：错题会平均分配到 {len(variant_models)} 套，"
+            "并按每套题型数量和举一反三要求补足。"
+        )
+        return AIPracticePreviewResponse(
+            parsed_requirement=parsed_requirement,
+            suggestion=AIPracticeSuggestion(
+                summary=summary,
+                selection_reason="先按时间范围取错题，再平均分配到多套练习单；每套不足的固定题型和迁移题由同知识点或同类别题补足。",
+                ordering_reason="每套内部默认按先易后难排序，保留错题重练和迁移训练的连续性。",
+                coverage_summary=f"共命中 {len(_fetch_wrong_period_questions(parsed, user_id, db))} 道错题，生成 {len(variant_models)} 套草稿。",
+                explanation_lines=_build_preview_explanations(parsed, variants, snapshot),
+                review_summary="这是错题时间段专用组卷逻辑，不再按普通候选池随机打散。",
+            ),
+            variants=variant_models,
+            selected_questions=first_variant.selected_questions,
+            candidate_count=len(candidates),
+            estimated_time=first_variant.estimated_time,
+            total_variants=len(variant_models),
+        )
+
     candidates, score_map, snapshot = _build_candidate_questions(parsed, user_id, db)
     rerank_insights: Dict[str, str] = {}
     if _should_use_ai_candidate_rerank(parsed, candidates):
@@ -1228,63 +1496,6 @@ def confirm_ai_sheets(req: AIPracticeConfirmRequest, user_id: int, db: Session) 
         raise HTTPException(status_code=400, detail="没有可生成的练习单")
 
     return AIPracticeConfirmResponse(created_count=len(created), sheets=created)
-
-
-def _select_adjust_question(
-    parsed_requirement: AIParsedRequirement,
-    current_question_ids: List[int],
-    user_id: int,
-    db: Session,
-    replace_question_id: Optional[int] = None,
-) -> Tuple[Question, Dict[str, Any], List[Question]]:
-    parsed = parsed_requirement.model_dump()
-    candidates, score_map, snapshot = _build_candidate_questions(parsed, user_id, db)
-    current_selected = db.query(Question).filter(Question.question_id.in_(current_question_ids)).all()
-    current_map = {q.question_id: q for q in current_selected}
-    target_question = current_map.get(replace_question_id) if replace_question_id else None
-
-    selected_without_target = [q for q in current_selected if q.question_id != replace_question_id]
-    penalty = Counter({qid: 1 for qid in current_question_ids for qid in [qid]})
-    blocked_ids = {replace_question_id} if replace_question_id else set()
-    replacement = _pick_best(
-        candidates,
-        selected_without_target,
-        score_map,
-        penalty,
-        target_question=target_question,
-        blocked_ids=blocked_ids,
-    )
-    if not replacement:
-        raise HTTPException(status_code=400, detail="暂时没有更合适的替换题")
-    return replacement, snapshot, selected_without_target + [replacement]
-
-
-def replace_ai_question(req, user_id: int, db: Session) -> AIPracticeAdjustResponse:
-    replacement, snapshot, final_questions = _select_adjust_question(
-        req.parsed_requirement,
-        req.current_question_ids,
-        user_id,
-        db,
-        replace_question_id=req.replace_question_id,
-    )
-    return AIPracticeAdjustResponse(
-        question=_serialize_selected_question(replacement, _question_reason(replacement, req.parsed_requirement.model_dump(), snapshot, mode="replace")),
-        estimated_time=_estimate_time(final_questions),
-    )
-
-
-def supplement_ai_question(req, user_id: int, db: Session) -> AIPracticeAdjustResponse:
-    replacement, snapshot, final_questions = _select_adjust_question(
-        req.parsed_requirement,
-        req.current_question_ids,
-        user_id,
-        db,
-        replace_question_id=None,
-    )
-    return AIPracticeAdjustResponse(
-        question=_serialize_selected_question(replacement, _question_reason(replacement, req.parsed_requirement.model_dump(), snapshot, mode="supplement")),
-        estimated_time=_estimate_time(final_questions),
-    )
 
 
 def _apply_replace_mode_bias(

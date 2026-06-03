@@ -12,3 +12,5 @@ numpy>=2.0.0
 Pillow>=10.0.0
 rapidocr_onnxruntime>=1.2.3
 PyMuPDF>=1.23.0
+langgraph>=0.2.60
+qdrant-client>=1.12.0

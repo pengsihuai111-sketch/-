@@ -1,6 +1,7 @@
 from pydantic import BaseModel, Field
 from typing import Optional, List, Dict
 from datetime import date, datetime
+from typing import Any
 
 
 # ===================== User =====================
@@ -459,6 +460,9 @@ class AIPracticePreviewRequest(BaseModel):
     difficulties: List[str] = Field(default_factory=list)
     difficulty_progression: bool = True
     must_include_wrong_questions: bool = False
+    recent_days: Optional[int] = Field(None, ge=1, le=365)
+    include_all_wrong_questions: bool = False
+    similar_question_count: int = Field(0, ge=0, le=10)
     avoid_recent_questions: bool = True
 
 
@@ -476,6 +480,9 @@ class AIParsedRequirement(BaseModel):
     difficulties: List[str] = Field(default_factory=list)
     difficulty_progression: bool = True
     must_include_wrong_questions: bool = False
+    recent_days: Optional[int] = None
+    include_all_wrong_questions: bool = False
+    similar_question_count: int = 0
     avoid_recent_questions: bool = True
     strategy_hint: str = ""
     reasoning_summary: str = ""
@@ -558,3 +565,47 @@ class AIPracticeAdjustResponse(BaseModel):
     question: AISelectedQuestion
     estimated_time: int = 0
     review_hint: str = ""
+
+
+# ===================== AI Assistant Agent =====================
+
+class AssistantChatRequest(BaseModel):
+    message: str = Field(..., min_length=1, max_length=2000)
+    session_id: Optional[str] = None
+
+
+class AssistantAction(BaseModel):
+    type: str
+    data: Dict[str, Any] = Field(default_factory=dict)
+
+
+class AssistantChatResponse(BaseModel):
+    session_id: str
+    reply: str = ""
+    intent: str = "fallback"
+    actions: List[AssistantAction] = Field(default_factory=list)
+    suggestions: List[str] = Field(default_factory=list)
+
+
+class AssistantSessionOut(BaseModel):
+    session_id: str
+    title: Optional[str] = None
+    status: str = "active"
+    updated_at: Optional[datetime] = None
+    created_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+
+class AssistantMessageOut(BaseModel):
+    message_id: int
+    session_id: str
+    role: str
+    content: Optional[str] = None
+    intent: Optional[str] = None
+    actions: List[AssistantAction] = Field(default_factory=list)
+    created_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True

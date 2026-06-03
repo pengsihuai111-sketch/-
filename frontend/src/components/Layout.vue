@@ -33,6 +33,10 @@
           <el-icon><EditPen /></el-icon>
           <span>练习单</span>
         </el-menu-item>
+        <el-menu-item index="/assistant">
+          <el-icon><DataAnalysis /></el-icon>
+          <span>AI 学习助手</span>
+        </el-menu-item>
         <el-menu-item index="/diagnosis">
           <el-icon><DataAnalysis /></el-icon>
           <span>学情诊断</span>

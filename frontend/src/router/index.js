@@ -8,6 +8,7 @@ const Questions = () => import('../views/Questions.vue')
 const QuestionInput = () => import('../views/QuestionInput.vue')
 const WrongQuestions = () => import('../views/WrongQuestions.vue')
 const Practice = () => import('../views/Practice.vue')
+const AIAssistant = () => import('../views/AIAssistant.vue')
 const Diagnosis = () => import('../views/Diagnosis.vue')
 const Member = () => import('../views/Member.vue')
 
@@ -24,6 +25,7 @@ const routes = [
       { path: 'question-input', name: 'QuestionInput', component: QuestionInput, meta: { title: '录入题目' } },
       { path: 'wrong-questions', name: 'WrongQuestions', component: WrongQuestions, meta: { title: '错题管理' } },
       { path: 'practice', name: 'Practice', component: Practice, meta: { title: '练习单' } },
+      { path: 'assistant', name: 'AIAssistant', component: AIAssistant, meta: { title: 'AI 学习助手' } },
       { path: 'diagnosis', name: 'Diagnosis', component: Diagnosis, meta: { title: '学情诊断' } },
       { path: 'member', name: 'Member', component: Member, meta: { title: '会员中心' } },
     ],
@@ -35,7 +37,6 @@ const router = createRouter({
   routes,
 })
 
-// 路由守卫
 router.beforeEach((to, _, next) => {
   const token = localStorage.getItem('token')
   if (to.path !== '/login' && to.path !== '/register' && !token) {
