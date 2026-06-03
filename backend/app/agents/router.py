@@ -82,6 +82,13 @@ def _extract_requested_ordinal(text: str) -> Optional[int]:
     return int(match.group(1)) if match else None
 
 
+def _wants_all_questions(text: str) -> bool:
+    compact = _compact(text)
+    all_words = ["所有题", "全部题", "每道题", "每一题", "所有题目", "全部题目", "每道题目", "全都"]
+    detail_words = ["解析", "答案", "解答", "讲解", "详细"]
+    return _contains_any(compact, all_words) and _contains_any(compact, detail_words)
+
+
 def _history_waiting_for_question(history: list[dict[str, Any]]) -> bool:
     for item in reversed(history[:-1] if history else []):
         if item.get("role") != "assistant":
@@ -122,14 +129,21 @@ def route_message(state: AgentState) -> AgentState:
         intent = SMALLTALK
         args = {"memory_query": "name"}
     elif attachment_questions and _contains_any(compact, ["讲", "讲解", "解析", "答案", "怎么做", "不会"]):
-        ordinal = _extract_requested_ordinal(text) or 1
-        question = attachment_questions[ordinal - 1] if 0 < ordinal <= len(attachment_questions) else attachment_questions[0]
         intent = QUESTION_EXPLAIN
-        args = {
-            "question_text": question.get("question_text") or "",
-            "source": "attachment",
-            "attachment_question_no": question.get("question_no") or ordinal,
-        }
+        if _wants_all_questions(text):
+            args = {
+                "source": "attachment",
+                "attachment_questions": attachment_questions,
+                "explain_all": True,
+            }
+        else:
+            ordinal = _extract_requested_ordinal(text) or 1
+            question = attachment_questions[ordinal - 1] if 0 < ordinal <= len(attachment_questions) else attachment_questions[0]
+            args = {
+                "question_text": question.get("question_text") or "",
+                "source": "attachment",
+                "attachment_question_no": question.get("question_no") or ordinal,
+            }
     elif _contains_any(compact, ["用这些题", "就这些题", "按这些题", "用上面这些", "按这个生成", "就按这个生成"]) and last_related_action:
         intent = PRACTICE_GENERATE
         args = {

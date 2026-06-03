@@ -113,6 +113,13 @@ def _wants_attachment_explanation(message: str) -> bool:
     )
 
 
+def _wants_all_attachment_explanations(message: str) -> bool:
+    compact = "".join(str(message or "").split())
+    all_words = ("所有题", "全部题", "每道题", "每一题", "所有题目", "全部题目", "文件里面的题目", "全都")
+    explain_words = ("讲解", "解析", "解答", "答案", "怎么做", "详细")
+    return any(word in compact for word in all_words) and any(word in compact for word in explain_words)
+
+
 async def _build_attachment_explanation_action(question: Dict[str, Any]) -> Dict[str, Any]:
     enriched = dict(question)
     if enriched.get("question_text") and (not enriched.get("answer") or not enriched.get("solution")):
@@ -133,15 +140,33 @@ async def _build_attachment_explanation_action(question: Dict[str, Any]) -> Dict
     return {"type": "show_question_explanation", "data": {"question": enriched}}
 
 
+async def _build_attachment_explanation_actions(questions: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    import asyncio
+
+    semaphore = asyncio.Semaphore(3)
+
+    async def explain_one(question: Dict[str, Any]) -> Dict[str, Any]:
+        async with semaphore:
+            return await _build_attachment_explanation_action(question)
+
+    return await asyncio.gather(*(explain_one(question) for question in questions[:12]))
+
+
 def _build_attachment_reply(
     filename: str,
     file_type: str,
     questions: List[Dict[str, Any]],
     wants_explanation: bool = False,
+    wants_all_explanations: bool = False,
 ) -> str:
     if not questions:
         return f"我已经收到 {filename}，但暂时没有从里面识别出明确题目。你可以换一张更清晰的图片，或把题目文字直接发给我。"
     type_label = {"image": "图片", "pdf": "PDF", "markdown": "文本文件"}.get(file_type, "文件")
+    if wants_all_explanations:
+        return (
+            f"我已经识别并解答了这个{type_label}：{filename}，共找到 {len(questions)} 道题。"
+            "下面按题目顺序展示每道题的答案和解析。"
+        )
     if wants_explanation:
         return (
             f"我已经识别并讲解了这个{type_label}：{filename}，共找到 {len(questions)} 道题。"
@@ -199,7 +224,14 @@ async def assistant_upload(
 
     questions = await _recognize_assistant_attachment(file_type, file_bytes, filename)
     wants_explanation = _wants_attachment_explanation(message)
-    reply = _build_attachment_reply(filename, file_type, questions, wants_explanation=wants_explanation)
+    wants_all_explanations = _wants_all_attachment_explanations(message)
+    reply = _build_attachment_reply(
+        filename,
+        file_type,
+        questions,
+        wants_explanation=wants_explanation,
+        wants_all_explanations=wants_all_explanations,
+    )
     actions = [{
         "type": "show_attachment_questions",
         "data": {
@@ -209,7 +241,16 @@ async def assistant_upload(
             "questions": questions[:30],
         },
     }]
-    if wants_explanation and questions:
+    if wants_all_explanations and questions:
+        explanation_actions = await _build_attachment_explanation_actions(questions)
+        actions.extend(explanation_actions)
+        for index, explanation_action in enumerate(explanation_actions):
+            explained = explanation_action.get("data", {}).get("question", {})
+            if index < len(questions):
+                questions[index]["answer"] = explained.get("answer", questions[index].get("answer", ""))
+                questions[index]["solution"] = explained.get("solution", questions[index].get("solution", ""))
+        suggestions = ["用这些题生成练习单", "推荐同类题", "再讲简单一点"]
+    elif wants_explanation and questions:
         explanation_action = await _build_attachment_explanation_action(questions[0])
         actions.append(explanation_action)
         explained = explanation_action.get("data", {}).get("question", {})

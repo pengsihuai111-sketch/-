@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from typing import Any, Dict
 
 from sqlalchemy.orm import Session
@@ -24,7 +25,77 @@ def _build_easy_mistakes(question_text: str, question_type: str, knowledge_point
     return mistakes[:3]
 
 
+async def _build_explanation_payload(
+    *,
+    question_text: str,
+    answer: str = "",
+    solution: str = "",
+    knowledge_point: str = "",
+    question_type: str = "",
+    question_id: int | None = None,
+    question_no: str | int | None = None,
+) -> Dict[str, Any]:
+    if question_text and (not answer or not solution):
+        result = await generate_answer(question_text, question_type, knowledge_point)
+        answer = answer or result.get("answer", "")
+        solution = solution or result.get("solution", "")
+
+    easy_mistakes = _build_easy_mistakes(question_text, question_type, knowledge_point)
+    return {
+        "question": {
+            "question_id": question_id,
+            "question_no": str(question_no or ""),
+            "question_text": question_text,
+            "answer": answer,
+            "solution": solution,
+            "knowledge_point": knowledge_point,
+            "question_type": question_type,
+            "easy_mistakes": easy_mistakes,
+            "explain_sections": [
+                {"title": "题意理解", "content": "先找清楚已知条件、要求的量，以及是否存在单位或比例关系。"},
+                {"title": "关键条件", "content": "把题干中的数量关系转化成算式、方程或图形关系。"},
+                {"title": "解题步骤", "content": solution or "这道题目前没有详细解析，建议先补充题目条件后再生成。"},
+                {"title": "易错提醒", "content": "；".join(easy_mistakes)},
+            ],
+        }
+    }
+
+
+async def _explain_attachment_questions(args: Dict[str, Any]) -> Dict[str, Any] | None:
+    questions = args.get("attachment_questions") or []
+    if not isinstance(questions, list) or not questions:
+        return None
+
+    # Keep one response readable and inside the request timeout.
+    questions = questions[:12]
+    semaphore = asyncio.Semaphore(3)
+
+    async def explain_one(question: Dict[str, Any]) -> Dict[str, Any]:
+        async with semaphore:
+            data = await _build_explanation_payload(
+                question_text=str(question.get("question_text") or "").strip(),
+                answer=str(question.get("answer") or "").strip(),
+                solution=str(question.get("solution") or question.get("analysis") or "").strip(),
+                knowledge_point=str(question.get("knowledge_point") or "").strip(),
+                question_type=str(question.get("question_type") or "").strip(),
+                question_no=question.get("question_no"),
+            )
+            return {"type": "show_question_explanation", "data": data}
+
+    actions = await asyncio.gather(*(explain_one(question) for question in questions))
+    return {
+        "reply": f"我把附件里的 {len(actions)} 道题都整理成答案解析了。每道题都按“题意、关键条件、步骤、易错点”展示。",
+        "actions": actions,
+        "suggestions": ["用这些题生成练习单", "推荐同类题", "再讲简单一点"],
+        "data": {"question_count": len(actions)},
+    }
+
+
 async def explain_question_tool(user_id: int, args: Dict[str, Any], db: Session) -> Dict[str, Any]:
+    attachment_result = await _explain_attachment_questions(args)
+    if attachment_result:
+        return attachment_result
+
     question = None
     question_id = args.get("question_id")
     if question_id:
@@ -57,29 +128,15 @@ async def explain_question_tool(user_id: int, args: Dict[str, Any], db: Session)
             "suggestions": ["讲解第 1 题", "我粘贴一道题给你", "查看最近错题"],
         }
 
-    if not answer or not solution:
-        result = await generate_answer(question_text, question_type, knowledge_point)
-        answer = answer or result.get("answer", "")
-        solution = solution or result.get("solution", "")
-
-    easy_mistakes = _build_easy_mistakes(question_text, question_type, knowledge_point)
-    data = {
-        "question": {
-            "question_id": question.question_id if question else None,
-            "question_text": question_text,
-            "answer": answer,
-            "solution": solution,
-            "knowledge_point": knowledge_point,
-            "question_type": question_type,
-            "easy_mistakes": easy_mistakes,
-            "explain_sections": [
-                {"title": "题意理解", "content": "先找清楚已知条件、要求的量，以及是否存在单位或比例关系。"},
-                {"title": "关键条件", "content": "把题干中的数量关系转化成算式、方程或图形关系。"},
-                {"title": "解题步骤", "content": solution or "这道题目前没有详细解析，建议先补充题目条件后再生成。"},
-                {"title": "易错提醒", "content": "；".join(easy_mistakes)},
-            ],
-        }
-    }
+    data = await _build_explanation_payload(
+        question_text=question_text,
+        answer=answer,
+        solution=solution,
+        knowledge_point=knowledge_point,
+        question_type=question_type,
+        question_id=question.question_id if question else None,
+        question_no=args.get("attachment_question_no"),
+    )
     return {
         "reply": "我按“题意、关键条件、步骤、易错点”整理好了这道题。",
         "actions": [{"type": "show_question_explanation", "data": data}],
