@@ -69,12 +69,16 @@
             accept="image/*,.pdf,.md,.markdown,.txt"
             @change="handleAttachmentChange"
           />
-          <el-button :disabled="loading" @click="triggerAttachmentUpload">上传附件</el-button>
+          <div class="attachment-actions">
+            <el-button :disabled="loading" @click="triggerAttachmentUpload">上传附件</el-button>
+            <el-button :disabled="loading" @click="triggerScreenshot">屏幕截图</el-button>
+          </div>
           <div class="composer-main">
             <div v-if="pendingAttachment" class="pending-attachment">
               <span>已选择：{{ pendingAttachment.name }}</span>
               <el-button size="small" link type="danger" @click="removePendingAttachment">移除</el-button>
             </div>
+            <div v-else class="paste-tip">支持 Win+Shift+S 截图后直接 Ctrl+V 粘贴</div>
             <el-input
               v-model="input"
               type="textarea"
@@ -92,7 +96,8 @@
 </template>
 
 <script setup>
-import { nextTick, onMounted, ref } from 'vue'
+import { nextTick, onMounted, onUnmounted, ref } from 'vue'
+import { ElMessage } from 'element-plus'
 import AssistantActionCard from '../components/assistant/AssistantActionCard.vue'
 import { chatWithAssistant, listAssistantMessages, uploadAssistantAttachment } from '../api/assistant'
 import { renderMath } from '../utils/math'
@@ -218,6 +223,66 @@ async function handleAttachmentChange(event) {
   pendingAttachment.value = file
 }
 
+function buildScreenshotFile(blob, prefix = '截图') {
+  const ext = blob.type?.includes('jpeg') ? 'jpg' : 'png'
+  const timestamp = new Date().toISOString().replace(/[:.]/g, '-')
+  return new File([blob], `${prefix}-${timestamp}.${ext}`, {
+    type: blob.type || 'image/png',
+  })
+}
+
+function setScreenshotAttachment(blob, sourceText = '截图') {
+  if (!blob || loading.value) return
+  pendingAttachment.value = buildScreenshotFile(blob, sourceText)
+  ElMessage.success('截图已添加为待上传附件，可以继续补充需求后发送')
+}
+
+function handlePaste(event) {
+  if (loading.value) return
+  const items = event.clipboardData?.items
+  if (!items?.length) return
+
+  for (const item of items) {
+    if (!item.type?.startsWith('image/')) continue
+    const blob = item.getAsFile()
+    if (!blob) continue
+    setScreenshotAttachment(blob, '粘贴截图')
+    event.preventDefault()
+    return
+  }
+}
+
+async function triggerScreenshot() {
+  if (loading.value) return
+  if (!navigator.mediaDevices?.getDisplayMedia) {
+    ElMessage.info('当前浏览器不支持屏幕截图，请使用 Win+Shift+S 后 Ctrl+V 粘贴截图')
+    return
+  }
+
+  try {
+    const stream = await navigator.mediaDevices.getDisplayMedia({ video: true })
+    const video = document.createElement('video')
+    video.srcObject = stream
+    video.muted = true
+    await new Promise((resolve) => {
+      video.onloadedmetadata = resolve
+    })
+    await video.play()
+    const canvas = document.createElement('canvas')
+    canvas.width = video.videoWidth
+    canvas.height = video.videoHeight
+    canvas.getContext('2d')?.drawImage(video, 0, 0)
+    stream.getTracks().forEach((track) => track.stop())
+    canvas.toBlob((blob) => {
+      if (blob) {
+        setScreenshotAttachment(blob, '屏幕截图')
+      }
+    }, 'image/png')
+  } catch (error) {
+    ElMessage.info('已取消截图')
+  }
+}
+
 function removePendingAttachment() {
   pendingAttachment.value = null
 }
@@ -262,6 +327,7 @@ async function sendAttachment(text = '') {
 }
 
 onMounted(async () => {
+  document.addEventListener('paste', handlePaste)
   if (!sessionId.value) return
   try {
     const rows = await listAssistantMessages(sessionId.value)
@@ -274,6 +340,10 @@ onMounted(async () => {
     sessionId.value = ''
     localStorage.removeItem(SESSION_STORAGE_KEY)
   }
+})
+
+onUnmounted(() => {
+  document.removeEventListener('paste', handlePaste)
 })
 </script>
 
@@ -462,6 +532,12 @@ onMounted(async () => {
   background: #fff;
 }
 
+.attachment-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
 .composer-main {
   display: grid;
   gap: 8px;
@@ -478,6 +554,11 @@ onMounted(async () => {
   color: #047857;
   background: #ecfdf5;
   font-size: 13px;
+}
+
+.paste-tip {
+  color: #94a3b8;
+  font-size: 12px;
 }
 
 .hidden-file-input {
