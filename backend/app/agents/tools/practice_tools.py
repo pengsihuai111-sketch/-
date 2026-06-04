@@ -27,16 +27,52 @@ def _serialize_selected_question(question: Question, reason: str = "来自上一
 def _extract_question_ids_from_action(action: dict[str, Any]) -> List[int]:
     data = action.get("data") or {}
     ids: List[int] = []
-    for key in ("items", "questions", "wrong_questions"):
+    for key in ("items", "questions", "wrong_questions", "selected_questions"):
         for item in data.get(key) or []:
             question_id = item.get("question_id")
             if question_id and int(question_id) not in ids:
                 ids.append(int(question_id))
+    question = data.get("question") if isinstance(data.get("question"), dict) else {}
+    if question.get("question_id") and int(question["question_id"]) not in ids:
+        ids.append(int(question["question_id"]))
     for variant in data.get("variants") or []:
         for question_id in variant.get("question_ids") or []:
             if question_id and int(question_id) not in ids:
                 ids.append(int(question_id))
+        for item in variant.get("selected_questions") or []:
+            question_id = item.get("question_id")
+            if question_id and int(question_id) not in ids:
+                ids.append(int(question_id))
     return ids
+
+
+def _extract_question_items_from_action(action: dict[str, Any]) -> List[dict[str, Any]]:
+    data = action.get("data") or {}
+    items: List[dict[str, Any]] = []
+    for key in ("items", "questions", "wrong_questions", "selected_questions"):
+        items.extend(item for item in data.get(key) or [] if isinstance(item, dict))
+    question = data.get("question") if isinstance(data.get("question"), dict) else {}
+    if question:
+        items.append(question)
+    for variant in data.get("variants") or []:
+        items.extend(item for item in variant.get("selected_questions") or [] if isinstance(item, dict))
+    return items
+
+
+def _build_prompt_with_source_questions(prompt: str, items: List[dict[str, Any]]) -> str:
+    snippets = []
+    for index, item in enumerate(items[:8], start=1):
+        text = str(item.get("question_text") or item.get("stem") or "").strip()
+        if not text:
+            continue
+        snippets.append(f"{index}. {text[:400]}")
+    if not snippets:
+        return prompt
+    return (
+        f"{prompt or '请基于以下题目生成一套举一反三练习单。'}\n\n"
+        "参考题目如下，请围绕这些题的知识点、题型和易错点生成练习预览，不要直接复制原题：\n"
+        + "\n".join(snippets)
+    )
 
 
 def _build_preview_from_question_ids(question_ids: List[int], db: Session, prompt: str = "") -> Dict[str, Any]:
@@ -105,7 +141,8 @@ async def generate_practice_preview_tool(user_id: int, args: Dict[str, Any], db:
     prompt = str(args.get("prompt") or "").strip()
     source_action = args.get("source_action") or {}
     if source_action:
-        data = _build_preview_from_question_ids(_extract_question_ids_from_action(source_action), db, prompt)
+        question_ids = _extract_question_ids_from_action(source_action)
+        data = _build_preview_from_question_ids(question_ids, db, prompt)
         if data:
             return {
                 "reply": "我已把上一轮这些题整理成练习单草稿，你确认后才会正式生成。",
@@ -113,6 +150,7 @@ async def generate_practice_preview_tool(user_id: int, args: Dict[str, Any], db:
                 "suggestions": ["确认生成练习单", "再补几题", "换一批题"],
                 "data": data,
             }
+        prompt = _build_prompt_with_source_questions(prompt, _extract_question_items_from_action(source_action))
 
     difficulties = []
     if args.get("difficulty_hint") == "easier":

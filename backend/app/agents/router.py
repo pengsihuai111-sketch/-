@@ -16,9 +16,11 @@ from .constants import (
     STUDY_PLAN,
     STUDY_SUMMARY,
     SYSTEM_HELP,
+    WRONG_QUESTION_ADD,
     WRONG_QUESTION_REVIEW,
 )
 from .conversation_memory import extract_user_name, is_name_query
+from .context import clean_attachment_questions
 from .state import AgentState
 
 
@@ -70,7 +72,7 @@ def _last_attachment_questions(history: list[dict[str, Any]]) -> list[dict[str, 
     action = _last_assistant_action(history, {"show_attachment_questions"})
     data = action.get("data") if action else {}
     questions = data.get("questions") if isinstance(data, dict) else []
-    return questions if isinstance(questions, list) else []
+    return clean_attachment_questions(questions) if isinstance(questions, list) else []
 
 
 def _extract_requested_ordinal(text: str) -> Optional[int]:
@@ -84,7 +86,25 @@ def _extract_requested_ordinal(text: str) -> Optional[int]:
 
 def _wants_all_questions(text: str) -> bool:
     compact = _compact(text)
-    all_words = ["所有题", "全部题", "每道题", "每一题", "所有题目", "全部题目", "每道题目", "全都"]
+    all_words = [
+        "所有题",
+        "全部题",
+        "每道题",
+        "每一题",
+        "每个题",
+        "每个题目",
+        "每一道题",
+        "每一个题",
+        "每一个题目",
+        "每题",
+        "各题",
+        "各个题",
+        "逐题",
+        "所有题目",
+        "全部题目",
+        "每道题目",
+        "全都",
+    ]
     detail_words = ["解析", "答案", "解答", "讲解", "详细"]
     return _contains_any(compact, all_words) and _contains_any(compact, detail_words)
 
@@ -174,6 +194,18 @@ def route_message(state: AgentState) -> AgentState:
         args = {"prompt": text}
     elif _contains_any(compact, weak_words):
         intent = LEARNING_DIAGNOSIS
+    elif "错题" in compact and _contains_any(compact, ["加入", "添加", "放到", "保存到", "收进", "放进"]):
+        intent = WRONG_QUESTION_ADD
+        if attachment_questions and _wants_all_questions(text):
+            args = {"source": "attachment", "attachment_questions": attachment_questions, "add_all": True}
+        elif attachment_questions:
+            ordinal = _extract_requested_ordinal(text) or 1
+            question = attachment_questions[ordinal - 1] if 0 < ordinal <= len(attachment_questions) else attachment_questions[0]
+            args = {
+                "source": "attachment",
+                "question_text": question.get("question_text") or "",
+                "attachment_question_no": question.get("question_no") or ordinal,
+            }
     elif "错题" in compact and _contains_any(compact, ["看", "查", "最近", "哪些", "列表", "回顾", "分析", "统计"]):
         intent = WRONG_QUESTION_REVIEW
         recent_days = _extract_recent_days(compact)

@@ -329,9 +329,16 @@
       <p class="help-text">
         {{ attachmentData.file_name || '上传文件' }}
         <span v-if="attachmentData.file_type"> · {{ attachmentTypeText }}</span>
+        <span v-if="attachmentQuestions.length">
+          · 已展示 {{ attachmentQuestions.length }} / {{ attachmentData.question_count || attachmentQuestions.length }} 题
+        </span>
       </p>
       <div v-if="attachmentQuestions.length" class="wrong-list">
-        <div v-for="item in attachmentQuestions.slice(0, 8)" :key="`${item.page_no || 1}-${item.question_no}`" class="wrong-item">
+        <div
+          v-for="(item, index) in attachmentQuestions"
+          :key="`${item.page_no || 1}-${item.question_no || index}-${index}`"
+          class="wrong-item"
+        >
           <div class="wrong-meta">
             第 {{ item.question_no || '?' }} 题
             <span v-if="item.page_no"> · 第 {{ item.page_no }} 页</span>
@@ -360,6 +367,28 @@
         </div>
       </div>
       <el-empty v-else description="暂时没有识别出明确题目，可以换更清晰的图片或文件再试。" :image-size="80" />
+    </template>
+
+    <template v-else-if="action.type === 'show_wrong_add_result'">
+      <div class="card-head">
+        <strong>错题本处理结果</strong>
+        <el-tag size="small" type="success">已处理</el-tag>
+      </div>
+      <div class="metric-grid compact">
+        <div class="metric-card">
+          <span>新增</span>
+          <strong>{{ action.data?.created || 0 }}</strong>
+        </div>
+        <div class="metric-card">
+          <span>已存在</span>
+          <strong>{{ action.data?.already_exists || 0 }}</strong>
+        </div>
+        <div class="metric-card">
+          <span>跳过</span>
+          <strong>{{ action.data?.skipped || 0 }}</strong>
+        </div>
+      </div>
+      <p class="help-text">已根据当前题目上下文处理错题本，重复题不会再次添加。</p>
     </template>
 
     <template v-else>
@@ -645,6 +674,31 @@ function goPractice() {
   border-radius: 16px;
   background: #f8fafc;
   border: 1px solid #dbeafe;
+  max-height: min(70vh, 760px);
+  overflow: auto;
+  scrollbar-width: thin;
+  scrollbar-color: #14b8a6 #e2e8f0;
+}
+
+.action-card::-webkit-scrollbar,
+.wrong-list::-webkit-scrollbar,
+.explain-block::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.action-card::-webkit-scrollbar-thumb,
+.wrong-list::-webkit-scrollbar-thumb,
+.explain-block::-webkit-scrollbar-thumb {
+  background: #14b8a6;
+  border-radius: 999px;
+}
+
+.action-card::-webkit-scrollbar-track,
+.wrong-list::-webkit-scrollbar-track,
+.explain-block::-webkit-scrollbar-track {
+  background: #e2e8f0;
+  border-radius: 999px;
 }
 
 .card-head {
@@ -664,6 +718,40 @@ function goPractice() {
   gap: 8px;
 }
 
+.card-tools :deep(.el-button),
+.wrong-action-row :deep(.el-button),
+.variant-actions :deep(.el-button),
+.confirm-row :deep(.el-button),
+.question-actions :deep(.el-button) {
+  color: #ffffff;
+  background: #059669;
+  border-color: #059669;
+  font-weight: 700;
+  box-shadow: 0 8px 18px rgba(5, 150, 105, 0.18);
+}
+
+.card-tools :deep(.el-button:hover),
+.wrong-action-row :deep(.el-button:hover),
+.variant-actions :deep(.el-button:hover),
+.confirm-row :deep(.el-button:hover),
+.question-actions :deep(.el-button:hover) {
+  color: #ffffff;
+  background: #047857;
+  border-color: #047857;
+}
+
+.question-actions :deep(.el-button.is-link) {
+  color: #047857;
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+}
+
+.question-actions :deep(.el-button.is-link:hover) {
+  color: #065f46;
+  background: #ecfdf5;
+}
+
 .wrong-action-row {
   justify-content: flex-end;
   margin-top: 10px;
@@ -673,6 +761,14 @@ function goPractice() {
 .wrong-list {
   display: grid;
   gap: 10px;
+}
+
+.wrong-list {
+  max-height: min(58vh, 620px);
+  overflow-y: auto;
+  padding-right: 4px;
+  scrollbar-width: thin;
+  scrollbar-color: #14b8a6 #e2e8f0;
 }
 
 .variant-item,
@@ -688,6 +784,8 @@ function goPractice() {
   color: #1e293b;
   font-weight: 700;
   line-height: 1.6;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .variant-meta,
@@ -704,6 +802,7 @@ function goPractice() {
   background: #f0fdf4;
   color: #047857;
   line-height: 1.55;
+  overflow-wrap: anywhere;
 }
 
 .question-preview {
@@ -719,6 +818,7 @@ function goPractice() {
   color: #475569;
   font-size: 13px;
   line-height: 1.55;
+  overflow-wrap: anywhere;
 }
 
 .question-text {
@@ -908,6 +1008,11 @@ function goPractice() {
 .explain-block {
   display: grid;
   gap: 10px;
+  max-height: min(62vh, 680px);
+  overflow-y: auto;
+  padding-right: 4px;
+  scrollbar-width: thin;
+  scrollbar-color: #14b8a6 #e2e8f0;
 }
 
 .explain-section {
@@ -926,6 +1031,8 @@ function goPractice() {
 .help-text {
   margin: 0;
   line-height: 1.75;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 pre {

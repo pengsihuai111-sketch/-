@@ -1,6 +1,7 @@
 PRACTICE_GENERATE = "practice_generate"
 LEARNING_DIAGNOSIS = "learning_diagnosis"
 WRONG_QUESTION_REVIEW = "wrong_question_review"
+WRONG_QUESTION_ADD = "wrong_question_add"
 QUESTION_EXPLAIN = "question_explain"
 SIMILAR_QUESTION_RECOMMEND = "similar_question_recommend"
 SEMANTIC_QUESTION_SEARCH = "semantic_question_search"
@@ -15,6 +16,7 @@ FIRST_VERSION_INTENTS = {
     PRACTICE_GENERATE,
     LEARNING_DIAGNOSIS,
     WRONG_QUESTION_REVIEW,
+    WRONG_QUESTION_ADD,
     QUESTION_EXPLAIN,
     SIMILAR_QUESTION_RECOMMEND,
     SEMANTIC_QUESTION_SEARCH,

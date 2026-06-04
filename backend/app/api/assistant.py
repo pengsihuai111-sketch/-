@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from ..agents.memory import ensure_session, parse_actions, save_message
 from ..agents.rate_limit import assistant_chat_limiter
 from ..agents.service import chat_with_assistant
+from ..agents.context import clean_attachment_questions
 from ..agents.tools.parent_tools import build_parent_report_tool
 from ..database import get_db
 from ..models import (
@@ -230,25 +231,72 @@ def _decode_text_file(file_bytes: bytes) -> str:
     raise HTTPException(status_code=400, detail="文件编码无法识别，请使用 UTF-8 或 GB18030 编码")
 
 
+def _looks_like_attachment_heading(
+    text: str,
+    answer: str = "",
+    solution: str = "",
+    question_type: str = "",
+) -> bool:
+    if answer.strip() or solution.strip():
+        return False
+
+    compact = re.sub(r"[\s#*_`]+", "", text or "")
+    compact = compact.strip("-—:：.。")
+    if not compact:
+        return True
+
+    heading_keywords = (
+        "提取题目",
+        "综合练习",
+        "错题练习",
+        "练习单",
+        "学生卷",
+        "答案卷",
+        "试卷",
+        "题目列表",
+        "题目解析",
+        "参考答案",
+        "答案解析",
+    )
+    if len(compact) <= 60 and any(keyword in compact for keyword in heading_keywords):
+        return True
+
+    section_pattern = r"^[一二三四五六七八九十\d]+[、.．](选择题|填空题|判断题|解答题|应用题|计算题|操作题).*$"
+    if re.match(section_pattern, compact):
+        return True
+
+    return False
+
+
 def _normalize_questions_payload(questions: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     normalized = []
     for index, question in enumerate(questions or [], start=1):
         text = str(question.get("question_text") or question.get("stem") or "").strip()
         if not text:
             continue
-        normalized.append({
-            "question_no": str(question.get("question_no") or index),
+        answer = str(question.get("answer") or "").strip()
+        solution = str(question.get("solution") or question.get("analysis") or "").strip()
+        question_type = question.get("question_type") or "other"
+        if _looks_like_attachment_heading(text, answer, solution, question_type):
+            continue
+
+        source_question_no = str(question.get("question_no") or index)
+        item = {
+            "question_no": str(len(normalized) + 1),
             "page_no": question.get("page_no") or 1,
             "question_text": text,
-            "answer": str(question.get("answer") or "").strip(),
-            "solution": str(question.get("solution") or question.get("analysis") or "").strip(),
-            "question_type": question.get("question_type") or "other",
+            "answer": answer,
+            "solution": solution,
+            "question_type": question_type,
             "difficulty": question.get("difficulty") or "中等",
             "knowledge_point": question.get("knowledge_point") or "",
             "knowledge_category": question.get("knowledge_category") or "",
             "confidence": question.get("confidence"),
-        })
-    return normalized
+        }
+        if source_question_no != item["question_no"]:
+            item["source_question_no"] = source_question_no
+        normalized.append(item)
+    return clean_attachment_questions(normalized)
 
 
 async def _recognize_assistant_attachment(file_type: str, file_bytes: bytes, filename: str) -> List[Dict[str, Any]]:
@@ -309,6 +357,15 @@ def _wants_all_attachment_explanations(message: str) -> bool:
         "全部题",
         "每道题",
         "每一题",
+        "每个题",
+        "每个题目",
+        "每一道题",
+        "每一个题",
+        "每一个题目",
+        "每题",
+        "各题",
+        "各个题",
+        "逐题",
         "所有题目",
         "全部题目",
         "这些题",
@@ -346,6 +403,15 @@ def _wants_add_all_to_wrong_book(message: str) -> bool:
         "全部题",
         "每道题",
         "每一题",
+        "每个题",
+        "每个题目",
+        "每一道题",
+        "每一个题",
+        "每一个题目",
+        "每题",
+        "各题",
+        "各个题",
+        "逐题",
         "这些题",
         "这几题",
         "图片里的题",
@@ -409,7 +475,7 @@ async def _build_attachment_explanation_actions(questions: List[Dict[str, Any]])
         async with semaphore:
             return await _build_attachment_explanation_action(question)
 
-    return await asyncio.gather(*(explain_one(question) for question in questions[:12]))
+    return await asyncio.gather(*(explain_one(question) for question in questions))
 
 
 def _build_attachment_reply(
@@ -509,7 +575,7 @@ async def assistant_upload(
             "file_name": filename,
             "file_type": file_type,
             "question_count": len(questions),
-            "questions": questions[:30],
+            "questions": questions,
         },
     }]
     if wants_all_explanations and questions:

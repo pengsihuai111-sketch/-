@@ -1,10 +1,15 @@
 from sqlalchemy.orm import Session
 
-from .llm import polish_reply_with_llm, route_message_with_llm
-from .response import build_response
-from .router import route_message
+from .nodes.main_nodes import (
+    business_dispatch_node,
+    context_resolver_node,
+    intent_router_node,
+    load_context_node,
+    memory_update_node,
+    response_compose_node,
+    task_planner_node,
+)
 from .state import AgentState
-from .tools.dispatcher import dispatch_tool
 
 try:
     from langgraph.graph import END, StateGraph
@@ -13,60 +18,35 @@ except Exception:  # pragma: no cover - fallback keeps dev server usable before 
     StateGraph = None
 
 
+MAIN_GRAPH_NODES = [
+    ("load_context_node", load_context_node),
+    ("intent_router_node", intent_router_node),
+    ("context_resolver_node", context_resolver_node),
+    ("task_planner_node", task_planner_node),
+    ("business_dispatch_node", business_dispatch_node),
+    ("response_compose_node", response_compose_node),
+    ("memory_update_node", memory_update_node),
+]
+
+
 async def run_agent_graph(initial_state: AgentState, db: Session) -> AgentState:
-    """Run the assistant graph. Uses LangGraph when installed, otherwise same node order fallback."""
+    """Run the assistant main graph and route into business subgraphs."""
     if StateGraph is None:
-        state = await _route_node(initial_state)
-        state = await dispatch_tool(state, db)
-        state = build_response(state)
-        return await _response_node(state)
-
-    async def router_node(state: AgentState) -> AgentState:
-        return await _route_node(state)
-
-    async def tool_node(state: AgentState) -> AgentState:
-        return await dispatch_tool(state, db)
-
-    async def response_node(state: AgentState) -> AgentState:
-        state = build_response(state)
-        return await _response_node(state)
+        state = initial_state
+        for _, node in MAIN_GRAPH_NODES:
+            state = await node(state, db)
+        return state
 
     graph = StateGraph(AgentState)
-    graph.add_node("router_node", router_node)
-    graph.add_node("tool_node", tool_node)
-    graph.add_node("response_node", response_node)
-    graph.set_entry_point("router_node")
-    graph.add_edge("router_node", "tool_node")
-    graph.add_edge("tool_node", "response_node")
-    graph.add_edge("response_node", END)
+    for node_name, node in MAIN_GRAPH_NODES:
+        async def wrapper(state: AgentState, _node=node) -> AgentState:
+            return await _node(state, db)
+
+        graph.add_node(node_name, wrapper)
+
+    graph.set_entry_point(MAIN_GRAPH_NODES[0][0])
+    for (left, _), (right, _) in zip(MAIN_GRAPH_NODES, MAIN_GRAPH_NODES[1:]):
+        graph.add_edge(left, right)
+    graph.add_edge(MAIN_GRAPH_NODES[-1][0], END)
     app = graph.compile()
     return await app.ainvoke(initial_state)
-
-
-async def _route_node(state: AgentState) -> AgentState:
-    rule_state = route_message(state)
-    if (rule_state.get("tool_args") or {}).get("source") == "attachment":
-        rule_state["router_source"] = "rule_attachment"
-        return rule_state
-    try:
-        return await route_message_with_llm(rule_state)
-    except Exception as exc:
-        rule_state["router_source"] = "rule_fallback"
-        rule_state["llm_router_error"] = str(exc)[:500]
-        return rule_state
-
-
-async def _response_node(state: AgentState) -> AgentState:
-    if state.get("error"):
-        return state
-    if state.get("response_source") == "memory":
-        return state
-    try:
-        polished = await polish_reply_with_llm(state)
-        if polished:
-            state["reply"] = polished
-            state["response_source"] = "llm"
-    except Exception as exc:
-        state["response_source"] = "tool_fallback"
-        state["llm_response_error"] = str(exc)[:500]
-    return state

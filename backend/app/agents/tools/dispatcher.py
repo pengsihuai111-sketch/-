@@ -12,6 +12,7 @@ from ..constants import (
     STUDY_PLAN,
     STUDY_SUMMARY,
     SYSTEM_HELP,
+    WRONG_QUESTION_ADD,
     WRONG_QUESTION_REVIEW,
 )
 from ..guardrails import safe_tool_args
@@ -41,6 +42,13 @@ async def dispatch_tool(state: AgentState, db: Session) -> AgentState:
         elif intent == WRONG_QUESTION_REVIEW:
             result = get_recent_wrong_questions_tool(user_id, args, db)
             tool_name = "get_recent_wrong_questions_tool"
+        elif intent == WRONG_QUESTION_ADD:
+            result = {
+                "reply": "我已经理解你想加入错题本，但当前通用工具分发器不直接执行写入，请通过错题子图处理。",
+                "actions": [],
+                "suggestions": ["把这题加入错题本", "查看最近错题"],
+            }
+            tool_name = "wrong_question_add_requires_subgraph"
         elif intent == QUESTION_EXPLAIN:
             result = await explain_question_tool(user_id, args, db)
             tool_name = "explain_question_tool"

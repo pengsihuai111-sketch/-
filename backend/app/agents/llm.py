@@ -17,6 +17,7 @@ from .constants import (
     STUDY_PLAN,
     STUDY_SUMMARY,
     SYSTEM_HELP,
+    WRONG_QUESTION_ADD,
     WRONG_QUESTION_REVIEW,
 )
 from .state import AgentState
@@ -74,6 +75,17 @@ def _sanitize_router_result(result: Dict[str, Any], fallback: AgentState) -> Age
         days = _safe_int(args.get("recent_days") or args.get("days"), default=None, max_value=365)
         if days:
             sanitized["recent_days"] = days
+    elif intent == WRONG_QUESTION_ADD:
+        if args.get("add_all"):
+            sanitized["add_all"] = True
+        question_id = _safe_int(args.get("question_id"), default=None, max_value=10_000_000)
+        if question_id:
+            sanitized["question_id"] = question_id
+        elif isinstance(args.get("attachment_questions"), list):
+            sanitized["attachment_questions"] = args["attachment_questions"][:20]
+            sanitized["add_all"] = bool(args.get("add_all"))
+        else:
+            sanitized["question_text"] = str(args.get("question_text") or fallback.get("message") or "").strip()
     elif intent == QUESTION_EXPLAIN:
         question_id = _safe_int(args.get("question_id"), default=None, max_value=10_000_000)
         if question_id:
@@ -132,6 +144,7 @@ async def route_message_with_llm(rule_state: AgentState) -> AgentState:
             PRACTICE_GENERATE: "生成练习单、组卷、错题举一反三",
             LEARNING_DIAGNOSIS: "查看薄弱点、掌握情况、学情诊断",
             WRONG_QUESTION_REVIEW: "查看或分析最近错题",
+            WRONG_QUESTION_ADD: "把当前题、附件题或指定题加入错题本",
             QUESTION_EXPLAIN: "讲解题目、生成答案解析",
             SIMILAR_QUESTION_RECOMMEND: "推荐同类题、相似题、举一反三题",
             SEMANTIC_QUESTION_SEARCH: "在题库中语义搜索题目",

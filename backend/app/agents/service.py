@@ -49,6 +49,20 @@ async def chat_with_assistant(req: AssistantChatRequest, user_id: int, db: Sessi
             "error": f"assistant request timeout after {AGENT_TIMEOUT_SECONDS}s",
         }
     elapsed_ms = int((time.perf_counter() - started) * 1000)
+    persisted_tool_result = final_state.get("tool_result") or {}
+    if isinstance(persisted_tool_result, dict):
+        persisted_tool_result = {
+            **persisted_tool_result,
+            "_agent_trace": {
+                "business_graph": final_state.get("business_graph") or "",
+                "sub_intent": final_state.get("sub_intent") or "",
+                "node_trace": final_state.get("node_trace") or [],
+                "tool_trace": final_state.get("tool_trace") or [],
+                "plan_steps": final_state.get("plan_steps") or [],
+                "resolved_target": final_state.get("resolved_target") or {},
+            },
+        }
+
     save_message(
         db,
         user_id=user_id,
@@ -58,7 +72,7 @@ async def chat_with_assistant(req: AssistantChatRequest, user_id: int, db: Sessi
         intent=final_state.get("intent", ""),
         tool_name=final_state.get("tool_name", ""),
         tool_args=final_state.get("tool_args") or {},
-        tool_result=final_state.get("tool_result") or {},
+        tool_result=persisted_tool_result,
         actions=final_state.get("actions") or [],
         error_message=final_state.get("error") or "",
     )
