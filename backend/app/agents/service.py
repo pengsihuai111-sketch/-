@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 from ..models import AgentInvocationLog, AssistantMessageRole
 from ..schemas import AssistantChatRequest, AssistantChatResponse
 from .graph import run_agent_graph
-from .memory import ensure_session, get_recent_history, save_message
+from .memory import ensure_session, get_recent_history, get_session_context, save_message, update_session_context
 from .state import AgentState
 
 AGENT_TIMEOUT_SECONDS = 75
@@ -23,11 +23,13 @@ async def chat_with_assistant(req: AssistantChatRequest, user_id: int, db: Sessi
         content=req.message,
     )
     history = get_recent_history(db, user_id, session.session_id)
+    session_context = get_session_context(db, user_id, session.session_id)
     initial_state: AgentState = {
         "user_id": user_id,
         "session_id": session.session_id,
         "message": req.message,
         "history": history,
+        "session_context": session_context,
         "actions": [],
         "suggestions": [],
     }
@@ -76,6 +78,8 @@ async def chat_with_assistant(req: AssistantChatRequest, user_id: int, db: Sessi
         actions=final_state.get("actions") or [],
         error_message=final_state.get("error") or "",
     )
+    if final_state.get("memory_updates"):
+        update_session_context(db, user_id, session.session_id, final_state["memory_updates"])
     db.add(AgentInvocationLog(
         session_id=session.session_id,
         user_id=user_id,

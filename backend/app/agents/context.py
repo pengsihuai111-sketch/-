@@ -112,12 +112,16 @@ def clean_attachment_questions(questions: List[Dict[str, Any]]) -> List[Dict[str
 
 def load_agent_context(state: AgentState) -> AgentState:
     history = state.get("history") or []
+    session_context = state.get("session_context") or {}
     attachment_action = _first_action(history, ATTACHMENT_ACTION_TYPES)
     question_action = _first_action(history, QUESTION_ACTION_TYPES)
     practice_action = _first_action(history, PRACTICE_ACTION_TYPES)
     wrong_action = _first_action(history, WRONG_ACTION_TYPES)
 
     attachment_data = _action_data(attachment_action)
+    session_attachment = session_context.get("recent_attachment") if isinstance(session_context, dict) else {}
+    if isinstance(session_attachment, dict) and session_attachment.get("questions"):
+        attachment_data = session_attachment
     question_data = _action_data(question_action)
     practice_data = _action_data(practice_action)
     wrong_data = _action_data(wrong_action)
@@ -130,6 +134,7 @@ def load_agent_context(state: AgentState) -> AgentState:
         "recent_practice_questions": _questions_from_practice_preview(practice_action),
         "recent_wrong_questions": wrong_data.get("wrong_questions") or [],
         "last_action_types": [action.get("type") for action in list(_iter_assistant_actions(history))[:8]],
+        "session_memory": session_context,
     }
     state["context"] = context
     state["memory"] = {

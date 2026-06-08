@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Upload
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from ..agents.memory import ensure_session, parse_actions, save_message
+from ..agents.memory import ensure_session, parse_actions, save_message, update_session_context
 from ..agents.rate_limit import assistant_chat_limiter
 from ..agents.service import chat_with_assistant
 from ..agents.context import clean_attachment_questions
@@ -618,6 +618,22 @@ async def assistant_upload(
         if added_count or existed_count:
             reply += f" 已处理错题本：新增 {added_count} 道，已存在 {existed_count} 道。"
             suggestions = ["去错题管理查看", "用这道题生成举一反三", "推荐同类题"]
+
+    update_session_context(
+        db,
+        user_id,
+        session.session_id,
+        {
+            "recent_attachment": {
+                "file_name": filename,
+                "file_type": file_type,
+                "question_count": len(questions),
+                "questions": clean_attachment_questions(questions),
+            },
+            "last_intent": "attachment_recognition",
+            "last_action_types": ["show_attachment_questions"],
+        },
+    )
 
     save_message(
         db,

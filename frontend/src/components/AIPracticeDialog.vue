@@ -5,6 +5,8 @@
     width="1120px"
     top="4vh"
     destroy-on-close
+    :close-on-click-modal="false"
+    :close-on-press-escape="false"
     @close="handleClose"
   >
     <div class="ai-practice-dialog">

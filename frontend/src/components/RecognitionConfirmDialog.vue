@@ -1,5 +1,14 @@
 <template>
-  <el-dialog :model-value="visible" title="确认识别结果" width="820px" top="5vh" destroy-on-close @close="handleCancel">
+  <el-dialog
+    :model-value="visible"
+    title="确认识别结果"
+    width="820px"
+    top="5vh"
+    destroy-on-close
+    :close-on-click-modal="false"
+    :close-on-press-escape="false"
+    @close="handleCancel"
+  >
     <div v-if="!result" style="text-align:center;padding:40px;color:#999">暂无识别结果</div>
 
     <template v-else>

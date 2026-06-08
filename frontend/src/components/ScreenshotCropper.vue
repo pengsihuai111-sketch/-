@@ -1,5 +1,14 @@
 <template>
-  <el-dialog :model-value="visible" title="裁剪题目区域" width="960px" top="3vh" :close-on-click-modal="false" @close="handleCancel" append-to-body>
+  <el-dialog
+    :model-value="visible"
+    title="裁剪题目区域"
+    width="960px"
+    top="3vh"
+    :close-on-click-modal="false"
+    :close-on-press-escape="false"
+    @close="handleCancel"
+    append-to-body
+  >
     <div style="text-align:center;margin-bottom:8px;color:#909399;font-size:13px">
       鼠标拖拽选择题目区域，按 <kbd>Enter</kbd> 确认，<kbd>Esc</kbd> 取消
     </div>

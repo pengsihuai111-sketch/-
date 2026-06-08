@@ -88,7 +88,13 @@
     </el-card>
 
     <!-- 题目详情对话框 -->
-    <el-dialog v-model="detailVisible" title="题目详情" width="700px">
+    <el-dialog
+      v-model="detailVisible"
+      title="题目详情"
+      width="700px"
+      :close-on-click-modal="false"
+      :close-on-press-escape="false"
+    >
       <div v-if="currentQuestion">
         <div style="margin-bottom: 16px">
           <el-tag size="small">#{{ currentQuestion.question_id }}</el-tag>
@@ -204,6 +210,8 @@ async function handleDelete(row) {
       confirmButtonText: '确定',
       cancelButtonText: '取消',
       type: 'warning',
+      closeOnClickModal: false,
+      closeOnPressEscape: false,
     })
     await deleteQuestion(row.question_id)
     ElMessage.success('删除成功')
@@ -222,7 +230,13 @@ async function handleBatchDelete() {
     await ElMessageBox.confirm(
       `确定删除选中的 ${ids.length} 道题目吗？此操作不可撤销。`,
       '批量删除',
-      { confirmButtonText: '确定', cancelButtonText: '取消', type: 'warning' }
+      {
+        confirmButtonText: '确定',
+        cancelButtonText: '取消',
+        type: 'warning',
+        closeOnClickModal: false,
+        closeOnPressEscape: false,
+      }
     )
     await batchDeleteQuestions({ question_ids: ids })
     ElMessage.success('批量删除成功')

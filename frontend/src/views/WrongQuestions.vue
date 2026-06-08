@@ -73,7 +73,14 @@
     </el-row>
 
     <!-- 录入错题对话框（双模式） -->
-    <el-dialog v-model="addVisible" title="录入错题" width="800px" destroy-on-close>
+    <el-dialog
+      v-model="addVisible"
+      title="录入错题"
+      width="800px"
+      destroy-on-close
+      :close-on-click-modal="false"
+      :close-on-press-escape="false"
+    >
       <el-tabs v-model="addMode">
         <!-- 模式1：手动选择 -->
         <el-tab-pane label="手动选择" name="manual">
@@ -366,7 +373,13 @@
     </el-dialog>
 
     <!-- 反馈对话框 -->
-    <el-dialog v-model="feedbackVisible" title="答题反馈" width="400px">
+    <el-dialog
+      v-model="feedbackVisible"
+      title="答题反馈"
+      width="400px"
+      :close-on-click-modal="false"
+      :close-on-press-escape="false"
+    >
       <el-form :model="feedbackForm" label-width="80px">
         <el-form-item label="是否做对">
           <el-radio-group v-model="feedbackForm.is_correct">
@@ -391,7 +404,13 @@
     </el-dialog>
 
     <!-- 题目详情对话框 -->
-    <el-dialog v-model="detailVisible" title="错题详情" width="700px">
+    <el-dialog
+      v-model="detailVisible"
+      title="错题详情"
+      width="700px"
+      :close-on-click-modal="false"
+      :close-on-press-escape="false"
+    >
       <div v-if="currentDetailQuestion">
         <div style="margin-bottom: 16px">
           <el-tag size="small">#{{ currentDetailQuestion.question_id }}</el-tag>
@@ -1035,7 +1054,11 @@ async function handleBatchDelete() {
   const ids = [...selectedWrongIds.value]
   if (!ids.length) return
   try {
-    await ElMessageBox.confirm(`确定删除选中的 ${ids.length} 条错题记录吗？`, '批量删除', { type: 'warning' })
+    await ElMessageBox.confirm(`确定删除选中的 ${ids.length} 条错题记录吗？`, '批量删除', {
+      type: 'warning',
+      closeOnClickModal: false,
+      closeOnPressEscape: false,
+    })
   } catch { return }
   let success = 0
   for (const id of ids) {
@@ -1049,7 +1072,11 @@ async function handleBatchDelete() {
 
 async function handleDelete(id) {
   try {
-    await ElMessageBox.confirm('确定删除该错题记录吗？')
+    await ElMessageBox.confirm('确定删除该错题记录吗？', '确认删除', {
+      type: 'warning',
+      closeOnClickModal: false,
+      closeOnPressEscape: false,
+    })
     await deleteWrongQuestion(id)
     ElMessage.success('已删除')
     await loadData()

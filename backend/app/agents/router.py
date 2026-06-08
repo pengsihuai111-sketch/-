@@ -138,7 +138,8 @@ def route_message(state: AgentState) -> AgentState:
     last_question_action = _last_assistant_action(history, {"show_question_explanation"})
     last_related_action = _last_assistant_action(history, {"show_similar_questions", "show_wrong_question_list"})
     last_preview_action = _last_assistant_action(history, {"show_practice_preview"})
-    attachment_questions = _last_attachment_questions(history)
+    context_attachment_questions = (state.get("context") or {}).get("recent_attachment_questions") or []
+    attachment_questions = context_attachment_questions or _last_attachment_questions(history)
     is_waiting_question = _history_waiting_for_question(history)
 
     introduced_name = extract_user_name(text)

@@ -308,7 +308,10 @@ class AssistantSession(Base):
     session_id = Column(String(64), primary_key=True)
     user_id = Column(Integer, ForeignKey("users.user_id", ondelete="CASCADE"), nullable=False)
     title = Column(String(100))
+    session_type = Column(String(50), default="chat")
+    summary = Column(String(200))
     status = Column(String(20), default=AssistantSessionStatus.active.value)
+    context_json = Column(Text)
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
 

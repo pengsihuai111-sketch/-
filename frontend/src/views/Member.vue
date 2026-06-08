@@ -72,7 +72,13 @@
     </el-card>
 
     <!-- 购买对话框 -->
-    <el-dialog v-model="buyVisible" title="选择套餐" width="420px">
+    <el-dialog
+      v-model="buyVisible"
+      title="选择套餐"
+      width="420px"
+      :close-on-click-modal="false"
+      :close-on-press-escape="false"
+    >
       <div style="text-align: center; padding: 10px">
         <div style="font-size: 18px; font-weight: bold">{{ selectedPlan?.name }}</div>
         <el-radio-group v-model="selectedDuration" style="margin-top: 20px">

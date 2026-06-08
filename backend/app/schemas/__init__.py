@@ -590,6 +590,8 @@ class AssistantChatResponse(BaseModel):
 class AssistantSessionOut(BaseModel):
     session_id: str
     title: Optional[str] = None
+    session_type: Optional[str] = "chat"
+    summary: Optional[str] = None
     status: str = "active"
     updated_at: Optional[datetime] = None
     created_at: Optional[datetime] = None

@@ -1,10 +1,38 @@
 import json
 import uuid
+from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from sqlalchemy.orm import Session
 
 from ..models import AssistantMessage, AssistantMessageRole, AssistantSession, AssistantSessionStatus
+
+SESSION_TYPE_BY_INTENT = {
+    "attachment_recognition": "attachment",
+    "practice_generate": "practice",
+    "learning_diagnosis": "diagnosis",
+    "wrong_question_review": "wrong_review",
+    "wrong_question_add": "wrong_review",
+    "question_explain": "explanation",
+    "similar_question_recommend": "search",
+    "semantic_question_search": "search",
+    "study_plan": "study_plan",
+    "study_summary": "study_summary",
+    "parent_report": "parent_report",
+}
+
+SESSION_TYPE_LABELS = {
+    "attachment": "文件识别",
+    "practice": "练习生成",
+    "diagnosis": "薄弱诊断",
+    "wrong_review": "错题回顾",
+    "explanation": "题目讲解",
+    "search": "找题推荐",
+    "study_plan": "学习计划",
+    "study_summary": "学习总结",
+    "parent_report": "家长报告",
+    "chat": "普通对话",
+}
 
 
 def _compact_preview_data(data: Dict[str, Any]) -> Dict[str, Any]:
@@ -51,12 +79,141 @@ def _compact_tool_result_for_storage(result: Dict[str, Any] | None) -> Dict[str,
     return compacted
 
 
+def _compact_question_for_context(question: Dict[str, Any]) -> Dict[str, Any]:
+    allowed_keys = (
+        "question_no",
+        "source_question_no",
+        "question_text",
+        "answer",
+        "solution",
+        "question_type",
+        "knowledge_point",
+        "knowledge_category",
+        "difficulty",
+        "page_no",
+    )
+    compacted = {key: question.get(key) for key in allowed_keys if question.get(key) not in (None, "")}
+    return compacted
+
+
+def _compact_context_for_storage(context: Dict[str, Any]) -> Dict[str, Any]:
+    compacted = dict(context or {})
+    attachment = compacted.get("recent_attachment")
+    if isinstance(attachment, dict):
+        attachment = dict(attachment)
+        questions = attachment.get("questions")
+        if isinstance(questions, list):
+            attachment["questions"] = [
+                _compact_question_for_context(item)
+                for item in questions[:60]
+                if isinstance(item, dict)
+            ]
+            attachment["question_count"] = attachment.get("question_count") or len(questions)
+        compacted["recent_attachment"] = attachment
+    resolved_target = compacted.get("last_resolved_target")
+    if isinstance(resolved_target, dict):
+        resolved_target = dict(resolved_target)
+        questions = resolved_target.get("questions")
+        if isinstance(questions, list):
+            resolved_target["questions"] = [
+                _compact_question_for_context(item)
+                for item in questions[:60]
+                if isinstance(item, dict)
+            ]
+            resolved_target["count"] = resolved_target.get("count") or len(questions)
+        question = resolved_target.get("question")
+        if isinstance(question, dict):
+            resolved_target["question"] = _compact_question_for_context(question)
+        compacted["last_resolved_target"] = resolved_target
+    return compacted
+
+
+def _is_generic_session_title(title: str | None) -> bool:
+    value = (title or "").strip()
+    return not value or value in {"AI学习助手", "AI 学习助手", "新的对话已经开始。告诉我你的学习目标，我们从这里继续。"}
+
+
+def _build_session_meta(context: Dict[str, Any]) -> Dict[str, str]:
+    intent = str(context.get("last_intent") or "")
+    session_type = str(context.get("session_type") or "") or SESSION_TYPE_BY_INTENT.get(intent, "chat")
+    title = ""
+    summary = ""
+
+    attachment = context.get("recent_attachment")
+    if isinstance(attachment, dict) and attachment.get("file_name"):
+        filename = str(attachment.get("file_name") or "上传文件")
+        question_count = int(attachment.get("question_count") or len(attachment.get("questions") or []))
+        type_label = {"image": "图片", "pdf": "PDF", "markdown": "Markdown", "text": "文本"}.get(
+            str(attachment.get("file_type") or ""),
+            "文件",
+        )
+        session_type = "attachment"
+        title = f"{filename} 识别"[:100]
+        summary = f"{type_label} · 已识别 {question_count} 道题"
+
+    if not summary and intent:
+        label = SESSION_TYPE_LABELS.get(session_type, "AI 对话")
+        summary = label
+
+    return {
+        "session_type": session_type or "chat",
+        "title": title,
+        "summary": summary[:200],
+    }
+
+
 def _json_for_storage(value: Any, fallback: Any) -> str:
     text = json.dumps(value if value is not None else fallback, ensure_ascii=False)
     # MySQL TEXT is 65,535 bytes; keep a safe margin for utf8mb4.
     if len(text.encode("utf-8")) <= 60000:
         return text
     return json.dumps({"truncated": True, "summary": "payload too large for assistant message storage"}, ensure_ascii=False)
+
+
+def parse_json_dict(raw: str | None) -> Dict[str, Any]:
+    if not raw:
+        return {}
+    try:
+        value = json.loads(raw)
+        return value if isinstance(value, dict) else {}
+    except Exception:
+        return {}
+
+
+def get_session_context(db: Session, user_id: int, session_id: str) -> Dict[str, Any]:
+    session = (
+        db.query(AssistantSession)
+        .filter(AssistantSession.user_id == user_id, AssistantSession.session_id == session_id)
+        .first()
+    )
+    return parse_json_dict(session.context_json if session else None)
+
+
+def update_session_context(
+    db: Session,
+    user_id: int,
+    session_id: str,
+    updates: Dict[str, Any],
+) -> Dict[str, Any]:
+    session = (
+        db.query(AssistantSession)
+        .filter(AssistantSession.user_id == user_id, AssistantSession.session_id == session_id)
+        .first()
+    )
+    if not session:
+        return {}
+    context = parse_json_dict(session.context_json)
+    context.update(updates or {})
+    compacted = _compact_context_for_storage(context)
+    meta = _build_session_meta(compacted)
+    session.context_json = _json_for_storage(compacted, {})
+    session.session_type = str(updates.get("session_type") or meta.get("session_type") or session.session_type or "chat")
+    session.summary = str(updates.get("summary") or meta.get("summary") or session.summary or "")[:200]
+    if meta.get("title") and (_is_generic_session_title(session.title) or str(session.title or "").startswith("上传：")):
+        session.title = meta["title"]
+    session.updated_at = datetime.now()
+    db.commit()
+    return compacted
 
 
 def ensure_session(db: Session, user_id: int, session_id: Optional[str], title_seed: str = "") -> AssistantSession:
@@ -74,6 +231,8 @@ def ensure_session(db: Session, user_id: int, session_id: Optional[str], title_s
         session_id=uuid.uuid4().hex,
         user_id=user_id,
         title=title or "AI学习助手",
+        session_type="chat",
+        summary="新的 AI 学习对话",
         status=AssistantSessionStatus.active.value,
     )
     db.add(session)
@@ -108,6 +267,13 @@ def save_message(
         error_message=error_message or None,
     )
     db.add(message)
+    session = (
+        db.query(AssistantSession)
+        .filter(AssistantSession.user_id == user_id, AssistantSession.session_id == session_id)
+        .first()
+    )
+    if session:
+        session.updated_at = datetime.now()
     db.commit()
     db.refresh(message)
     return message

@@ -557,7 +557,11 @@ async function handleBatchDeleteSheets() {
   const ids = [...selectedSheetIds.value]
   if (!ids.length) return
   try {
-    await ElMessageBox.confirm(`确定删除选中的 ${ids.length} 个练习单吗？删除后不可恢复。`, '批量删除', { type: 'warning' })
+    await ElMessageBox.confirm(`确定删除选中的 ${ids.length} 个练习单吗？删除后不可恢复。`, '批量删除', {
+      type: 'warning',
+      closeOnClickModal: false,
+      closeOnPressEscape: false,
+    })
   } catch { return }
   let success = 0
   for (const id of ids) {
@@ -571,7 +575,11 @@ async function handleBatchDeleteSheets() {
 
 async function handleDelete(row) {
   try {
-    await ElMessageBox.confirm(`确定删除练习单「${row.sheet_name}」吗？删除后不可恢复。`, '确认删除', { type: 'warning' })
+    await ElMessageBox.confirm(`确定删除练习单「${row.sheet_name}」吗？删除后不可恢复。`, '确认删除', {
+      type: 'warning',
+      closeOnClickModal: false,
+      closeOnPressEscape: false,
+    })
   } catch { return }
 
   try {

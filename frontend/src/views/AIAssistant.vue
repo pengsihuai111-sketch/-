@@ -13,19 +13,66 @@
 
     <section class="assistant-shell">
       <aside class="assistant-side">
-        <div class="side-title">可以这样问</div>
-        <button
-          v-for="item in quickPrompts"
-          :key="item"
-          class="prompt-chip"
-          type="button"
-          @click="sendMessage(item)"
-        >
-          {{ item }}
-        </button>
+        <div class="session-section">
+          <div class="side-header">
+            <div class="side-title">我的对话</div>
+            <el-button size="small" type="primary" plain @click="startNewSession">新建</el-button>
+          </div>
+          <div v-if="sessions.length" class="session-list">
+            <div
+              v-for="session in sessions"
+              :key="session.session_id"
+              :class="['session-item', { active: session.session_id === sessionId }]"
+            >
+              <button class="session-open" type="button" @click="selectSession(session.session_id)">
+                <span class="session-main">
+                  <span class="session-title">{{ session.title || 'AI 学习助手' }}</span>
+                  <span class="session-meta">
+                    <span :class="['session-type', `type-${session.session_type || 'chat'}`]">
+                      {{ getSessionTypeLabel(session.session_type) }}
+                    </span>
+                    <span v-if="session.summary" class="session-summary">{{ session.summary }}</span>
+                  </span>
+                  <span class="session-time">{{ formatSessionTime(session.updated_at || session.created_at) }}</span>
+                </span>
+              </button>
+              <button
+                class="session-delete"
+                type="button"
+                title="删除对话"
+                @click.stop="removeSession(session.session_id)"
+              >
+                ×
+              </button>
+            </div>
+          </div>
+          <div v-else class="empty-session">还没有历史对话，发送第一条消息后会自动保存。</div>
+        </div>
+
+        <div class="prompt-section">
+          <div class="side-title">可以这样问</div>
+          <button
+            v-for="item in quickPrompts"
+            :key="item"
+            class="prompt-chip"
+            type="button"
+            @click="sendMessage(item)"
+          >
+            {{ item }}
+          </button>
+        </div>
       </aside>
 
       <main class="chat-panel">
+        <div v-if="currentSession" class="current-task-bar">
+          <div>
+            <span :class="['session-type', `type-${currentSession.session_type || 'chat'}`]">
+              {{ getSessionTypeLabel(currentSession.session_type) }}
+            </span>
+            <strong>{{ currentSession.title || 'AI 学习助手' }}</strong>
+          </div>
+          <span>{{ currentSession.summary || '当前 AI 学习对话' }}</span>
+        </div>
         <div ref="messageListRef" class="message-list">
           <div v-for="message in messages" :key="message.localId" :class="['message-row', message.role]">
             <div class="message-bubble">
@@ -108,10 +155,16 @@
 </template>
 
 <script setup>
-import { nextTick, onMounted, onUnmounted, ref } from 'vue'
-import { ElMessage } from 'element-plus'
+import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import AssistantActionCard from '../components/assistant/AssistantActionCard.vue'
-import { chatWithAssistant, listAssistantMessages, uploadAssistantAttachment } from '../api/assistant'
+import {
+  chatWithAssistant,
+  deleteAssistantSession,
+  listAssistantMessages,
+  listAssistantSessions,
+  uploadAssistantAttachment,
+} from '../api/assistant'
 import { renderMath } from '../utils/math'
 
 const quickPrompts = [
@@ -130,9 +183,15 @@ const SESSION_STORAGE_KEY = 'ai_assistant_current_session_id'
 const sessionId = ref(localStorage.getItem(SESSION_STORAGE_KEY) || '')
 const input = ref('')
 const loading = ref(false)
+const sessions = ref([])
 const messageListRef = ref(null)
 const fileInputRef = ref(null)
 const pendingAttachment = ref(null)
+
+const currentSession = computed(() => {
+  if (!sessionId.value) return null
+  return sessions.value.find((item) => item.session_id === sessionId.value) || null
+})
 
 function createLocalId(prefix = 'msg') {
   if (globalThis.crypto?.randomUUID) {
@@ -166,6 +225,8 @@ function startNewSession() {
   sessionId.value = ''
   localStorage.removeItem(SESSION_STORAGE_KEY)
   messages.value = [createWelcomeMessage('新的对话已经开始。告诉我你的学习目标，我们从这里继续。')]
+  pendingAttachment.value = null
+  input.value = ''
 }
 
 function persistSession(nextSessionId) {
@@ -183,6 +244,81 @@ function normalizeHistoryMessages(rows = []) {
     actions: item.actions || [],
     suggestions: [],
   }))
+}
+
+function formatSessionTime(value) {
+  if (!value) return ''
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return ''
+  const now = new Date()
+  const sameDay = date.toDateString() === now.toDateString()
+  if (sameDay) {
+    return date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
+  }
+  return date.toLocaleDateString('zh-CN', { month: '2-digit', day: '2-digit' })
+}
+
+function getSessionTypeLabel(type = 'chat') {
+  const labels = {
+    attachment: '文件',
+    practice: '练习',
+    diagnosis: '诊断',
+    wrong_review: '错题',
+    explanation: '讲题',
+    search: '找题',
+    study_plan: '计划',
+    study_summary: '总结',
+    parent_report: '家长',
+    chat: '对话',
+  }
+  return labels[type] || '对话'
+}
+
+async function loadSessions() {
+  try {
+    sessions.value = await listAssistantSessions()
+  } catch (error) {
+    sessions.value = []
+  }
+}
+
+async function selectSession(nextSessionId) {
+  if (!nextSessionId || nextSessionId === sessionId.value || loading.value) return
+  persistSession(nextSessionId)
+  pendingAttachment.value = null
+  input.value = ''
+  try {
+    const rows = await listAssistantMessages(nextSessionId)
+    const historyMessages = normalizeHistoryMessages(rows || [])
+    messages.value = historyMessages.length
+      ? historyMessages
+      : [createWelcomeMessage('这个对话还没有消息，可以从这里继续。')]
+    await scrollToBottom()
+  } catch (error) {
+    ElMessage.error('加载对话失败')
+  }
+}
+
+async function removeSession(targetSessionId) {
+  try {
+    await ElMessageBox.confirm('确定删除这个 AI 对话吗？删除后无法恢复。', '删除对话', {
+      type: 'warning',
+      closeOnClickModal: false,
+      closeOnPressEscape: false,
+    })
+  } catch {
+    return
+  }
+  try {
+    await deleteAssistantSession(targetSessionId)
+    if (targetSessionId === sessionId.value) {
+      startNewSession()
+    }
+    await loadSessions()
+    ElMessage.success('对话已删除')
+  } catch (error) {
+    ElMessage.error('删除对话失败')
+  }
 }
 
 async function sendMessage(preset = '') {
@@ -217,6 +353,7 @@ async function sendMessage(preset = '') {
       actions: res.actions || [],
       suggestions: res.suggestions || [],
     })
+    await loadSessions()
   } finally {
     loading.value = false
     await scrollToBottom()
@@ -325,8 +462,8 @@ async function sendAttachment(text = '') {
   if (sessionId.value) {
     formData.append('session_id', sessionId.value)
   }
-  if (input.value.trim()) {
-    formData.append('message', input.value.trim())
+  if (text.trim()) {
+    formData.append('message', text.trim())
   }
 
   input.value = ''
@@ -342,6 +479,7 @@ async function sendAttachment(text = '') {
       actions: res.actions || [],
       suggestions: res.suggestions || [],
     })
+    await loadSessions()
   } finally {
     loading.value = false
     await scrollToBottom()
@@ -350,6 +488,7 @@ async function sendAttachment(text = '') {
 
 onMounted(async () => {
   document.addEventListener('paste', handlePaste)
+  await loadSessions()
   if (!sessionId.value) return
   try {
     const rows = await listAssistantMessages(sessionId.value)
@@ -455,10 +594,174 @@ onUnmounted(() => {
   overflow-y: auto;
 }
 
+.session-section {
+  padding-bottom: 16px;
+  margin-bottom: 16px;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.side-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
 .side-title {
   margin-bottom: 12px;
   color: #334155;
   font-weight: 700;
+}
+
+.side-header .side-title {
+  margin-bottom: 0;
+}
+
+.session-list {
+  display: grid;
+  gap: 8px;
+}
+
+.session-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 26px;
+  align-items: center;
+  gap: 6px;
+  padding: 4px;
+  border: 1px solid #e2e8f0;
+  border-radius: 14px;
+  background: #f8fafc;
+  transition: all 0.18s ease;
+}
+
+.session-item:hover {
+  border-color: #99f6e4;
+  background: #f0fdfa;
+}
+
+.session-item.active {
+  border-color: #10b981;
+  background: linear-gradient(135deg, #ecfdf5, #f0fdfa);
+  box-shadow: inset 3px 0 0 #10b981;
+}
+
+.session-open {
+  min-width: 0;
+  padding: 8px 6px 8px 10px;
+  text-align: left;
+  color: #0f172a;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+
+.session-main,
+.session-title,
+.session-time,
+.session-meta {
+  display: block;
+}
+
+.session-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.session-time {
+  margin-top: 4px;
+  color: #64748b;
+  font-size: 12px;
+}
+
+.session-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  margin-top: 6px;
+}
+
+.session-type {
+  flex: 0 0 auto;
+  padding: 2px 6px;
+  border-radius: 999px;
+  color: #047857;
+  background: #d1fae5;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.session-type.type-attachment {
+  color: #0369a1;
+  background: #e0f2fe;
+}
+
+.session-type.type-practice {
+  color: #9a3412;
+  background: #ffedd5;
+}
+
+.session-type.type-diagnosis,
+.session-type.type-wrong_review {
+  color: #b91c1c;
+  background: #fee2e2;
+}
+
+.session-type.type-explanation {
+  color: #6d28d9;
+  background: #ede9fe;
+}
+
+.session-type.type-parent_report,
+.session-type.type-study_plan,
+.session-type.type-study_summary {
+  color: #0f766e;
+  background: #ccfbf1;
+}
+
+.session-summary {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #64748b;
+  font-size: 12px;
+}
+
+.session-delete {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  color: #94a3b8;
+  background: transparent;
+  cursor: pointer;
+  font-size: 18px;
+  line-height: 22px;
+}
+
+.session-delete:hover {
+  color: #ef4444;
+  background: #fee2e2;
+}
+
+.empty-session {
+  padding: 12px;
+  border: 1px dashed #bae6fd;
+  border-radius: 14px;
+  color: #64748b;
+  background: #f8fafc;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.prompt-section {
+  min-height: 0;
 }
 
 .prompt-chip {
@@ -487,6 +790,40 @@ onUnmounted(() => {
   flex-direction: column;
   min-height: 0;
   overflow: hidden;
+}
+
+.current-task-bar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 12px 18px;
+  border-bottom: 1px solid #e2e8f0;
+  color: #334155;
+  background: linear-gradient(135deg, #ffffff, #f8fafc);
+}
+
+.current-task-bar > div {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.current-task-bar strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.current-task-bar > span {
+  flex: 0 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #64748b;
+  font-size: 13px;
 }
 
 .message-list {

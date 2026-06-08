@@ -424,7 +424,10 @@ async function handleBatchImport() {
   }
 
   try {
-    await ElMessageBox.confirm(`确认导入 ${previewQuestions.value.length} 道题目？`, '确认')
+    await ElMessageBox.confirm(`确认导入 ${previewQuestions.value.length} 道题目？`, '确认', {
+      closeOnClickModal: false,
+      closeOnPressEscape: false,
+    })
   } catch { return }
 
   batchLoading.value = true
@@ -599,7 +602,10 @@ async function handleImportRecognized() {
   }
 
   try {
-    await ElMessageBox.confirm(`确认导入 ${recognizedQuestions.value.length} 道识别后的题目？`, '确认')
+    await ElMessageBox.confirm(`确认导入 ${recognizedQuestions.value.length} 道识别后的题目？`, '确认', {
+      closeOnClickModal: false,
+      closeOnPressEscape: false,
+    })
   } catch { return }
 
   importLoading.value = true

@@ -6,6 +6,7 @@ class AgentState(TypedDict, total=False):
     session_id: str
     message: str
     history: List[Dict[str, Any]]
+    session_context: Dict[str, Any]
     context: Dict[str, Any]
     memory: Dict[str, Any]
     intent: str
